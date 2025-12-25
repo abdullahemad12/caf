@@ -298,13 +298,20 @@ checksum = "d71b6127be86fdcfddb610f7182ac57211d4b18a3e9c82eb2d17662f2227ad6a"
 name = "caf"
 version = "0.1.0"
 dependencies = [
- "anyhow",
- "async-trait",
  "clap",
  "futures",
  "libp2p",
+ "serde",
  "tokio",
- "unsigned-varint 0.7.2",
+]
+
+[[package]]
+name = "cbor4ii"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "472931dd4dfcc785075b09be910147f9c6258883fc4591d0dac6116392b2daa6"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
@@ -1292,18 +1299,17 @@ dependencies = [
  "libp2p-connection-limits",
  "libp2p-core",
  "libp2p-dns",
- "libp2p-identify",
  "libp2p-identity",
  "libp2p-kad",
  "libp2p-mdns",
  "libp2p-metrics",
  "libp2p-noise",
- "libp2p-ping",
  "libp2p-quic",
  "libp2p-request-response",
  "libp2p-swarm",
  "libp2p-tcp",
  "libp2p-upnp",
+ "libp2p-websocket",
  "libp2p-yamux",
  "multiaddr",
  "pin-project",
@@ -1377,29 +1383,6 @@ dependencies = [
  "parking_lot",
  "smallvec",
  "tracing",
-]
-
-[[package]]
-name = "libp2p-identify"
-version = "0.45.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1711b004a273be4f30202778856368683bd9a83c4c7dcc8f848847606831a4e3"
-dependencies = [
- "asynchronous-codec",
- "either",
- "futures",
- "futures-bounded",
- "futures-timer",
- "libp2p-core",
- "libp2p-identity",
- "libp2p-swarm",
- "lru",
- "quick-protobuf",
- "quick-protobuf-codec",
- "smallvec",
- "thiserror 1.0.69",
- "tracing",
- "void",
 ]
 
 [[package]]
@@ -1478,10 +1461,8 @@ checksum = "77ebafa94a717c8442d8db8d3ae5d1c6a15e30f2d347e0cd31d057ca72e42566"
 dependencies = [
  "futures",
  "libp2p-core",
- "libp2p-identify",
  "libp2p-identity",
  "libp2p-kad",
- "libp2p-ping",
  "libp2p-swarm",
  "pin-project",
  "prometheus-client",
@@ -1515,24 +1496,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "libp2p-ping"
-version = "0.45.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "005a34420359223b974ee344457095f027e51346e992d1e0dcd35173f4cdd422"
-dependencies = [
- "either",
- "futures",
- "futures-timer",
- "libp2p-core",
- "libp2p-identity",
- "libp2p-swarm",
- "rand 0.8.5",
- "tracing",
- "void",
- "web-time",
-]
-
-[[package]]
 name = "libp2p-quic"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1563,6 +1526,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1356c9e376a94a75ae830c42cdaea3d4fe1290ba409a22c809033d1b7dcab0a6"
 dependencies = [
  "async-trait",
+ "cbor4ii",
  "futures",
  "futures-bounded",
  "futures-timer",
@@ -1570,6 +1534,7 @@ dependencies = [
  "libp2p-identity",
  "libp2p-swarm",
  "rand 0.8.5",
+ "serde",
  "smallvec",
  "tracing",
  "void",
@@ -1662,6 +1627,27 @@ dependencies = [
  "tokio",
  "tracing",
  "void",
+]
+
+[[package]]
+name = "libp2p-websocket"
+version = "0.44.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "888b2ff2e5d8dcef97283daab35ad1043d18952b65e05279eecbe02af4c6e347"
+dependencies = [
+ "either",
+ "futures",
+ "futures-rustls",
+ "libp2p-core",
+ "libp2p-identity",
+ "parking_lot",
+ "pin-project-lite",
+ "rw-stream-sink",
+ "soketto",
+ "thiserror 1.0.69",
+ "tracing",
+ "url",
+ "webpki-roots",
 ]
 
 [[package]]
@@ -2541,6 +2527,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "sha1"
+version = "0.10.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e3bf829a2d51ab4a5ddf1352d8470c140cadc8301b2ae1789db023f01cedd6ba"
+dependencies = [
+ "cfg-if",
+ "cpufeatures",
+ "digest",
+]
+
+[[package]]
 name = "sha2"
 version = "0.10.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2622,6 +2619,21 @@ checksum = "17129e116933cf371d018bb80ae557e889637989d8638274fb25622827b03881"
 dependencies = [
  "libc",
  "windows-sys 0.60.2",
+]
+
+[[package]]
+name = "soketto"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2e859df029d160cb88608f5d7df7fb4753fd20fdfb4de5644f3d8b8440841721"
+dependencies = [
+ "base64",
+ "bytes",
+ "futures",
+ "httparse",
+ "log",
+ "rand 0.8.5",
+ "sha1",
 ]
 
 [[package]]
@@ -2936,10 +2948,6 @@ name = "unsigned-varint"
 version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6889a77d49f1f013504cec6bf97a2c730394adedaeb1deb5ea08949a50541105"
-dependencies = [
- "futures-io",
- "futures-util",
-]
 
 [[package]]
 name = "unsigned-varint"
@@ -3083,6 +3091,12 @@ dependencies = [
  "js-sys",
  "wasm-bindgen",
 ]
+
+[[package]]
+name = "webpki-roots"
+version = "0.25.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5f20c57d8d7db6d3b86154206ae5d8fba62dd39573114de97c2cb0578251f8e1"
 
 [[package]]
 name = "widestring"
