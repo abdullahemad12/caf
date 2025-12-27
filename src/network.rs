@@ -8,7 +8,7 @@ use std::{
 };
 
 use libp2p::{
-    identity, kad,
+    identify, identity, kad,
     multiaddr::Protocol,
     noise,
     request_response::{self, OutboundRequestId, ProtocolSupport, ResponseChannel},
@@ -60,6 +60,7 @@ enum Command {
 struct Behaviour {
     request_response: request_response::cbor::Behaviour<package::PackageId, package::Package>,
     kademlia: kad::Behaviour<kad::store::MemoryStore>,
+    identify: identify::Behaviour,
 }
 
 #[derive(Clone)]
@@ -180,9 +181,16 @@ impl NetworkClient {
 pub struct Network {
     stream: pin::Pin<Box<dyn Stream<Item = Event>>>,
 }
+macro_rules! protocol_version {
+    () => {
+        "0.0.1"
+    };
+}
 
 impl Network {
-    const PROTOCOL_NAME: &'static str = "/caf/1.0.0";
+    const PROTOCOL_VERSION: &'static str = protocol_version!();
+    const PROTOCOL_NAME: &'static str = concat!("/caf/", protocol_version!());
+
     pub fn init(network_conf: NetworkConfig) -> Result<(Self, NetworkClient), Box<dyn Error>> {
         let id_keys = identity::Keypair::generate_ed25519();
 
@@ -207,6 +215,10 @@ impl Network {
                     )],
                     request_response::Config::default(),
                 ),
+                identify: identify::Behaviour::new(identify::Config::new(
+                    Network::PROTOCOL_VERSION.to_string(),
+                    key.public(),
+                )),
             })?
             .with_swarm_config(|conf| {
                 conf.with_idle_connection_timeout(network_conf.idle_connection_timeout)
@@ -293,6 +305,9 @@ impl EventLoop {
             SwarmEvent::Behaviour(BehaviourEvent::RequestResponse(event)) => {
                 self.process_request_response_event(event).await;
             }
+            SwarmEvent::Behaviour(BehaviourEvent::Identify(event)) => {
+                self.process_identify_event(event).await;
+            }
             SwarmEvent::NewListenAddr { address, .. } => eprintln!(
                 "Local node is already listening on {:?}",
                 address.with(Protocol::P2p(*self.swarm.local_peer_id()))
@@ -324,8 +339,21 @@ impl EventLoop {
                 peer_id: Some(peer_id),
                 ..
             } => println!("Dialing peer {}", peer_id),
-            // TODO: maybe not panic here?
-            unhandled => panic!("unhandled event: {:?}", unhandled),
+            unhandled => eprintln!("unhandled event {:?}", unhandled),
+        }
+    }
+
+    async fn process_identify_event(&mut self, event: identify::Event) {
+        match event {
+            identify::Event::Received { peer_id, info, .. } => {
+                info.listen_addrs.iter().for_each(|addr| {
+                    self.swarm
+                        .behaviour_mut()
+                        .kademlia
+                        .add_address(&peer_id, addr.clone());
+                });
+            }
+            _ => eprintln!("unhandled identify event: {:?}", event),
         }
     }
 
@@ -381,14 +409,8 @@ impl EventLoop {
                     )),
                 ..
             } => {}
-            kad::Event::InboundRequest { request } => self.process_inbound_requqest(request).await,
+            kad::Event::InboundRequest { request } => println!("Inbound request {:?}", request),
             unhandled => eprintln!("unhandled kademlia event: {:?}", unhandled),
-        }
-    }
-
-    async fn process_inbound_requqest(&mut self, req: kad::InboundRequest) {
-        match req {
-            kad::InboundRequest::startProviding { .. } => {}
         }
     }
 
