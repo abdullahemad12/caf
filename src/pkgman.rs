@@ -115,12 +115,15 @@ mod tests {
 
     #[test]
     fn install_package_writes_content_and_metadata() {
+        // given:
         let temp_dir = tempdir().unwrap();
         let manager = manager_for_temp_dir(&temp_dir);
         let package = sample_package();
 
+        // when:
         manager.install_package(package.clone()).unwrap();
 
+        // then:
         let install_path = temp_dir
             .path()
             .join("pkgs")
@@ -128,6 +131,7 @@ mod tests {
             .join(&package.id.version);
 
         let content_path = install_path.join(PackageManager::CONTENT_FILE_NAME);
+
         let metadata_path = install_path
             .parent()
             .unwrap()
@@ -148,26 +152,33 @@ mod tests {
 
     #[test]
     fn retrieve_package_returns_stored_package() {
+        // given:
         let temp_dir = tempdir().unwrap();
         let manager = manager_for_temp_dir(&temp_dir);
         let package = sample_package();
         manager.install_package(package.clone()).unwrap();
 
+        // when:
         let retrieved = manager.retrieve_package(&package.id).unwrap();
-        assert_eq!(retrieved.id, package.id);
-        assert_eq!(retrieved.content, package.content);
+
+        // then:
+        assert_eq!(retrieved, package);
     }
 
     #[test]
     fn retrieve_active_package_version_reads_metadata() {
+        // given:
         let temp_dir = tempdir().unwrap();
         let manager = manager_for_temp_dir(&temp_dir);
         let package = sample_package();
         manager.install_package(package.clone()).unwrap();
 
+        // when:
         let active = manager
             .retrieve_active_package_version(&package.id.name)
             .unwrap();
+
+        // then:
         assert_eq!(active, package.id);
     }
 }

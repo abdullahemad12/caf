@@ -3,7 +3,6 @@ use futures::FutureExt;
 use libp2p::{multiaddr::Protocol, Multiaddr};
 use std::{error::Error, io::Write, path::PathBuf};
 
-mod database;
 mod network;
 mod package;
 mod pkgman;
