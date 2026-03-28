@@ -24,7 +24,7 @@ use crate::package;
 pub enum Event {
     InboundRequest {
         request: package::PackageId,
-        channel: ResponseChannel<package::Package>,
+        channel: ResponseChannel<package::CompressedPackageContent>,
     },
 }
 
@@ -39,13 +39,13 @@ enum Command {
         sender: oneshot::Sender<HashSet<PeerId>>,
     },
     RequestPackage {
-        package_name: String,
+        package_id: package::PackageId,
         peer_id: PeerId,
-        sender: oneshot::Sender<Result<package::Package, Box<dyn Error + Send>>>,
+        sender: oneshot::Sender<Result<package::CompressedPackageContent, Box<dyn Error + Send>>>,
     },
     ResponsePackage {
-        package: package::Package,
-        channel: ResponseChannel<package::Package>,
+        package: package::CompressedPackageContent,
+        channel: ResponseChannel<package::CompressedPackageContent>,
     },
     StartProviding {
         package_name: String,
@@ -58,7 +58,8 @@ enum Command {
 
 #[derive(NetworkBehaviour)]
 struct Behaviour {
-    request_response: request_response::cbor::Behaviour<package::PackageId, package::Package>,
+    request_response:
+        request_response::cbor::Behaviour<package::PackageId, package::CompressedPackageContent>,
     kademlia: kad::Behaviour<kad::store::MemoryStore>,
     identify: identify::Behaviour,
 }
@@ -94,12 +95,12 @@ impl NetworkClient {
     pub async fn request_package(
         &mut self,
         peer_id: PeerId,
-        package_name: String,
-    ) -> Result<package::Package, Box<dyn Error + Send>> {
+        package_id: package::PackageId,
+    ) -> Result<package::CompressedPackageContent, Box<dyn Error + Send>> {
         let (sender, receiver) = oneshot::channel();
         self.sender
             .send(Command::RequestPackage {
-                package_name,
+                package_id,
                 peer_id,
                 sender,
             })
@@ -154,8 +155,8 @@ impl NetworkClient {
 
     pub async fn respond_package(
         &mut self,
-        package: package::Package,
-        channel: ResponseChannel<package::Package>,
+        package: package::CompressedPackageContent,
+        channel: ResponseChannel<package::CompressedPackageContent>,
     ) {
         self.sender
             .send(Command::ResponsePackage { package, channel })
@@ -262,7 +263,7 @@ struct EventLoop {
     pending_get_providers: HashMap<kad::QueryId, oneshot::Sender<HashSet<PeerId>>>,
     pending_request_package: HashMap<
         OutboundRequestId,
-        oneshot::Sender<Result<package::Package, Box<dyn Error + Send>>>,
+        oneshot::Sender<Result<package::CompressedPackageContent, Box<dyn Error + Send>>>,
     >,
 }
 
@@ -416,7 +417,7 @@ impl EventLoop {
 
     async fn process_request_response_event(
         &mut self,
-        event: request_response::Event<package::PackageId, package::Package>,
+        event: request_response::Event<package::PackageId, package::CompressedPackageContent>,
     ) {
         match event {
             request_response::Event::Message { message, .. } => match message {
@@ -497,14 +498,14 @@ impl EventLoop {
             }
             Command::RequestPackage {
                 peer_id,
-                package_name,
+                package_id,
                 sender,
             } => {
                 let query_id = self
                     .swarm
                     .behaviour_mut()
                     .request_response
-                    .send_request(&peer_id, package::PackageId { name: package_name });
+                    .send_request(&peer_id, package_id);
 
                 self.pending_request_package.insert(query_id, sender);
             }

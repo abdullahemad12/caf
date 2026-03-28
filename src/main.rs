@@ -3,15 +3,17 @@ use futures::FutureExt;
 use libp2p::{multiaddr::Protocol, Multiaddr};
 use std::{error::Error, io::Write, path::PathBuf};
 
+mod database;
 mod network;
 mod package;
 mod pkgman;
+mod utils;
 
 #[derive(Parser, Debug)]
 #[command(name = "libp2p file sharing example")]
 struct Opt {
     #[arg(long)]
-    peer: Option<Multiaddr>,
+    boostrap: Option<Multiaddr>,
 
     #[arg(long)]
     listen_address: Option<Multiaddr>,
@@ -47,10 +49,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let (mut ntwrk, mut ntwrk_client) = network::Network::init(network::NetworkConfig::new())
         .expect("to initialize network successfully");
 
-    let pkg_man =
-        pkgman::PackageManager::new(package::PackageId { name: package_name }, package_path);
+    let pkg_man = pkgman::PackageManager::new("fix me".to_string());
 
-    if let Some(addr) = opt.peer {
+    if let Some(addr) = opt.boostrap {
         let Some(Protocol::P2p(peer_id)) = addr.iter().last() else {
             return Err("expect peer multiaddr to contain peer id".into());
         };
@@ -73,14 +74,20 @@ async fn main() -> Result<(), Box<dyn Error>> {
             loop {
                 match ntwrk.next_event().await {
                     network::Event::InboundRequest { request, channel } => {
-                        if let Some(package) = pkg_man.retrieve_package(request) {
-                            ntwrk_client.respond_package(package, channel).await;
+                        if let Ok(package) = pkg_man.retrieve_package(&request) {
+                            ntwrk_client.respond_package(package.content, channel).await;
                         }
                     }
                 }
             }
         }
         CliArgument::Get { name } => {
+            let version: String = "7.0".into(); // TODO add option to get it from cli args
+                                                // TODO If the version is not provided by the user default to getting the latest
+                                                // version.. Make a request with an optional parameter (version) that would get the
+                                                // hash of the package based on the version if it is provided and defaults to the
+                                                // latest if not
+
             let providers = ntwrk_client.get_providers(name.clone()).await;
 
             if providers.is_empty() {
@@ -92,7 +99,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 .map(|it| {
                     let mut network_client = ntwrk_client.clone();
                     let name = name.clone();
-                    async move { network_client.request_package(it, name).await }.boxed()
+                    let version = version.clone();
+
+                    async move {
+                        network_client
+                            .request_package(it, package::PackageId { name, version })
+                            .await
+                    }
+                    .boxed()
                 })
                 .collect();
 
