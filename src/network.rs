@@ -18,7 +18,10 @@ use libp2p::{
 use std::{error::Error, time::Duration};
 use tokio::spawn;
 
-use crate::package;
+use crate::{
+    errors::{CafError, WrapError},
+    package,
+};
 
 #[derive(Debug)]
 pub enum Event {
@@ -192,7 +195,7 @@ impl Network {
     const PROTOCOL_VERSION: &'static str = protocol_version!();
     const PROTOCOL_NAME: &'static str = concat!("/caf/", protocol_version!());
 
-    pub fn init(network_conf: NetworkConfig) -> Result<(Self, NetworkClient), Box<dyn Error>> {
+    pub fn init(network_conf: NetworkConfig) -> Result<(Self, NetworkClient), Box<CafError>> {
         let id_keys = identity::Keypair::generate_ed25519();
 
         let peer_id = id_keys.public().to_peer_id();
@@ -203,7 +206,8 @@ impl Network {
                 tcp::Config::default(),
                 noise::Config::new,
                 yamux::Config::default,
-            )?
+            )
+            .wrap_err("unable to open tcp socket")?
             .with_behaviour(|key| Behaviour {
                 kademlia: kad::Behaviour::new(
                     peer_id,
@@ -220,7 +224,8 @@ impl Network {
                     Network::PROTOCOL_VERSION.to_string(),
                     key.public(),
                 )),
-            })?
+            })
+            .wrap_err("unable to build swarm")?
             .with_swarm_config(|conf| {
                 conf.with_idle_connection_timeout(network_conf.idle_connection_timeout)
             })
@@ -231,7 +236,17 @@ impl Network {
             .kademlia
             .set_mode(Some(kad::Mode::Server));
 
-        swarm.listen_on(network_conf.client_address.parse()?)?;
+        swarm
+            .listen_on(
+                network_conf
+                    .client_address
+                    .parse()
+                    .wrap_err("unable to parse address")?,
+            )
+            .wrap_err(format!(
+                "unable to listen on the given address {}",
+                network_conf.client_address
+            ))?;
 
         let (command_sender, command_receiver) = mpsc::channel(0);
         let (event_sender, event_receiver) = mpsc::channel(0);

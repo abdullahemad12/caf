@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+
+podman run -it --rm \
+  --net=host \
+  -v "$(pwd)":/workspace:Z \
+  -v "$HOME/.gemini-docker":/root/.gemini \
+  gemini-cli
+

@@ -1,12 +1,18 @@
 use clap::Parser;
 use futures::FutureExt;
 use libp2p::{multiaddr::Protocol, Multiaddr};
-use std::{error::Error, io::Write, path::PathBuf};
+use std::{error::Error, fs, io::Write, path::PathBuf};
 
+use crate::errors::{CafError, WrapError};
+
+mod errors;
+mod lock;
 mod network;
 mod package;
 mod pkgman;
 mod utils;
+
+pub const PROJECT_NAME: &str = env!("CARGO_PKG_NAME");
 
 #[derive(Parser, Debug)]
 #[command(name = "libp2p file sharing example")]
@@ -16,39 +22,18 @@ struct Opt {
 
     #[arg(long)]
     listen_address: Option<Multiaddr>,
-
-    #[command(subcommand)]
-    argument: CliArgument,
-}
-
-#[derive(Debug, Parser)]
-enum CliArgument {
-    Provide {
-        #[arg(long)]
-        path: PathBuf,
-
-        #[arg(long)]
-        name: String,
-    },
-    Get {
-        #[arg(long)]
-        name: String,
-    },
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let opt = Opt::parse();
 
-    let (package_name, package_path) = match &opt.argument {
-        CliArgument::Provide { name, path } => (name.clone(), path.clone()),
-        CliArgument::Get { name } => (name.clone(), "".into()),
-    };
+    lock::acquire_caf_lock().unwrap();
 
-    let (mut ntwrk, mut ntwrk_client) = network::Network::init(network::NetworkConfig::new())
-        .expect("to initialize network successfully");
+    let (mut ntwrk, mut ntwrk_client) =
+        network::Network::init(network::NetworkConfig::new()).unwrap();
 
-    let pkg_man = pkgman::PackageManager::new("fix me".to_string());
+    let pkg_man = pkgman::PackageManager::new(get_root_dir_path().unwrap());
 
     if let Some(addr) = opt.boostrap {
         let Some(Protocol::P2p(peer_id)) = addr.iter().last() else {
@@ -73,9 +58,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
             loop {
                 match ntwrk.next_event().await {
                     network::Event::InboundRequest { request, channel } => {
-                        if let Ok(package) = pkg_man.retrieve_package(&request) {
+                        /*if let Ok(package) = pkg_man.retrieve_package(&request) {
                             ntwrk_client.respond_package(package.content, channel).await;
-                        }
+                        }*/
                     }
                 }
             }
@@ -120,4 +105,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
     };
 
     Ok(())
+}
+
+// TODO maybe this needs to be OS dependent
+// TODO this needs to be configurable (e.g through cli options or through a config file)
+fn get_root_dir_path() -> Result<PathBuf, CafError> {
+    let default_path = PathBuf::from(&format!("/home/{}/.{}", PROJECT_NAME, PROJECT_NAME));
+
+    let path = default_path; // should be determined the following precedence: cli args > config file > default
+
+    fs::create_dir_all(&path).wrap_err("the root directory couldn't be created")?;
+
+    Ok(path)
 }

@@ -1,11 +1,12 @@
 use serde::{Deserialize, Serialize};
-use std::fs;
+use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 
-use crate::package;
+use crate::errors::WrapError;
+use crate::{errors, package, utils};
 
 pub struct PackageManager {
-    root_dir: String,
+    root_dir: PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -24,18 +25,18 @@ impl PackageManager {
     const CONTENT_FILE_NAME: &'static str = "pkg.zip";
     const METADATA_FILE_NAME: &'static str = "metadata.json";
 
-    fn get_package_path(root_dir: &String, package_name: &String) -> PathBuf {
-        Path::new(&root_dir)
+    fn get_package_path(&self, package_name: &String) -> PathBuf {
+        self.root_dir
             .join(PackageManager::PKGS_PATH)
             .join(package_name)
     }
 
-    pub fn new(root_dir: String) -> Self {
-        return PackageManager { root_dir };
+    pub fn new(root_dir: PathBuf) -> Result<Self, errors::CafError> {
+        return Ok(PackageManager { root_dir });
     }
 
     pub fn install_package(&self, package: package::Package) -> Result<(), std::io::Error> {
-        let pkg_path = PackageManager::get_package_path(&self.root_dir, &package.id.name);
+        let pkg_path = self.get_package_path(&package.id.name);
         let install_path = pkg_path.join(package.id.version.clone());
 
         let metadata_json = serde_json::to_string_pretty(&PackageMetadata {
@@ -61,7 +62,8 @@ impl PackageManager {
         &self,
         request: &package::PackageId,
     ) -> Result<package::Package, std::io::Error> {
-        let pkg_content_path = PackageManager::get_package_path(&self.root_dir, &request.name)
+        let pkg_content_path = self
+            .get_package_path(&request.name)
             .join(&request.version)
             .join(PackageManager::CONTENT_FILE_NAME);
 
@@ -99,7 +101,7 @@ mod tests {
     use crate::package::{CompressedPackageContent, Package, PackageId};
     use tempfile::tempdir;
 
-    fn sample_package() -> Package {
+    fn fixture_package() -> Package {
         Package {
             id: PackageId {
                 name: "widget".into(),
@@ -109,16 +111,12 @@ mod tests {
         }
     }
 
-    fn manager_for_temp_dir(temp_dir: &tempfile::TempDir) -> PackageManager {
-        PackageManager::new(temp_dir.path().to_string_lossy().into_owned())
-    }
-
     #[test]
     fn install_package_writes_content_and_metadata() {
         // given:
         let temp_dir = tempdir().unwrap();
-        let manager = manager_for_temp_dir(&temp_dir);
-        let package = sample_package();
+        let manager = PackageManager::new(temp_dir.path().to_string_lossy().into_owned());
+        let package = fixture_package();
 
         // when:
         manager.install_package(package.clone()).unwrap();
@@ -154,8 +152,9 @@ mod tests {
     fn retrieve_package_returns_stored_package() {
         // given:
         let temp_dir = tempdir().unwrap();
-        let manager = manager_for_temp_dir(&temp_dir);
-        let package = sample_package();
+        let manager = PackageManager::new(temp_dir.path().to_string_lossy().into_owned());
+        let package = fixture_package();
+
         manager.install_package(package.clone()).unwrap();
 
         // when:
@@ -169,8 +168,8 @@ mod tests {
     fn retrieve_active_package_version_reads_metadata() {
         // given:
         let temp_dir = tempdir().unwrap();
-        let manager = manager_for_temp_dir(&temp_dir);
-        let package = sample_package();
+        let manager = PackageManager::new(temp_dir.path().to_string_lossy().into_owned());
+        let package = fixture_package();
         manager.install_package(package.clone()).unwrap();
 
         // when:
