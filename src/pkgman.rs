@@ -1,9 +1,7 @@
+use crate::errors::{CafError, WrapErrorInResult};
 use serde::{Deserialize, Serialize};
-use std::fs::{self, File};
-use std::path::{Path, PathBuf};
-
-use crate::errors::WrapError;
-use crate::{errors, package, utils};
+use std::fs;
+use std::path::PathBuf;
 
 pub struct PackageManager {
     root_dir: PathBuf,
@@ -13,6 +11,34 @@ pub struct PackageManager {
 pub struct PackageMetadata {
     name: String,
     active_version: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PackageId {
+    pub name: String,
+    pub version: String,
+}
+
+impl std::fmt::Display for PackageId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}@{}", self.name, self.version)
+    }
+}
+
+// Contents of the packages are compressed into a single file (e.g. zip, tar.gz, etc..)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct CompressedPackageContent(pub Vec<u8>);
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Package {
+    pub id: PackageId,
+    pub content: CompressedPackageContent,
+}
+
+impl std::fmt::Display for Package {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.id.fmt(f)
+    }
 }
 
 // Design:
@@ -31,64 +57,84 @@ impl PackageManager {
             .join(package_name)
     }
 
-    pub fn new(root_dir: PathBuf) -> Result<Self, errors::CafError> {
-        return Ok(PackageManager { root_dir });
+    pub fn new(root_dir: PathBuf) -> Self {
+        return PackageManager { root_dir };
     }
 
-    pub fn install_package(&self, package: package::Package) -> Result<(), std::io::Error> {
+    // The design needs to be reworked https://chatgpt.com/c/6a80b9d5-3ce0-83eb-b1a4-04ef0cd92d3f
+    pub fn install_package(&self, package: Package) -> Result<(), CafError> {
         let pkg_path = self.get_package_path(&package.id.name);
         let install_path = pkg_path.join(package.id.version.clone());
 
         let metadata_json = serde_json::to_string_pretty(&PackageMetadata {
             name: package.id.name.clone(),
             active_version: package.id.version.clone(),
-        })?;
+        })
+        .wrap_err(format!(
+            "unable to serialize the package metadata into JSON for package {}",
+            package.id
+        ))?;
 
-        fs::create_dir_all(&install_path)?;
-        fs::write(
-            install_path.join(PackageManager::CONTENT_FILE_NAME),
-            package.content.0,
-        )?;
+        fs::create_dir_all(&install_path).wrap_err(format!(
+            "unable to create the package directory for package {}",
+            package.id
+        ))?;
+
+        let installed_package_path = install_path.join(PackageManager::CONTENT_FILE_NAME);
+        fs::write(installed_package_path.clone(), package.content.0).wrap_err(format!(
+            "unabel to write the file content of the package {} to the file {}",
+            package.id,
+            installed_package_path.to_string_lossy(),
+        ))?;
 
         fs::write(
             pkg_path.join(PackageManager::METADATA_FILE_NAME),
             metadata_json,
-        )?;
+        )
+        .wrap_err(format!(
+            "unable to write the package metadata for package {}",
+            package.id
+        ))?;
 
         Ok(())
     }
 
-    pub fn retrieve_package(
-        &self,
-        request: &package::PackageId,
-    ) -> Result<package::Package, std::io::Error> {
+    pub fn retrieve_package(&self, request: &PackageId) -> Result<Package, CafError> {
         let pkg_content_path = self
             .get_package_path(&request.name)
             .join(&request.version)
             .join(PackageManager::CONTENT_FILE_NAME);
 
-        let content = fs::read(pkg_content_path)?;
+        let content =
+            fs::read(pkg_content_path).wrap_err("unable to retrieve the package from the db")?;
 
-        return Ok(package::Package {
+        return Ok(Package {
             id: request.clone(),
-            content: package::CompressedPackageContent(content),
+            content: CompressedPackageContent(content),
         });
     }
 
     pub fn retrieve_active_package_version(
         &self,
         package_name: &String,
-    ) -> Result<package::PackageId, std::io::Error> {
+    ) -> Result<PackageId, CafError> {
         let metadata_file = fs::File::open(
-            PackageManager::get_package_path(&self.root_dir, &package_name)
+            self.get_package_path(&package_name)
                 .join(PackageManager::METADATA_FILE_NAME),
-        )?;
+        )
+        .wrap_err(format!(
+            "unable to open the metadata file for the package version retrieval of package {}",
+            package_name,
+        ))?;
 
         let reader = std::io::BufReader::new(metadata_file);
 
-        let metadata: PackageMetadata = serde_json::from_reader(reader)?;
+        let metadata: PackageMetadata = serde_json::from_reader(reader).wrap_err(format!(
+            "unable to serialize the package metadata into JSON for package {}",
+            package_name,
+        ))?;
 
-        return Ok(package::PackageId {
+        return Ok(PackageId {
             name: metadata.name,
             version: metadata.active_version,
         });
@@ -98,7 +144,6 @@ impl PackageManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::package::{CompressedPackageContent, Package, PackageId};
     use tempfile::tempdir;
 
     fn fixture_package() -> Package {
@@ -115,7 +160,7 @@ mod tests {
     fn install_package_writes_content_and_metadata() {
         // given:
         let temp_dir = tempdir().unwrap();
-        let manager = PackageManager::new(temp_dir.path().to_string_lossy().into_owned());
+        let manager = PackageManager::new(temp_dir.path().to_path_buf());
         let package = fixture_package();
 
         // when:
@@ -152,7 +197,7 @@ mod tests {
     fn retrieve_package_returns_stored_package() {
         // given:
         let temp_dir = tempdir().unwrap();
-        let manager = PackageManager::new(temp_dir.path().to_string_lossy().into_owned());
+        let manager = PackageManager::new(temp_dir.path().to_path_buf());
         let package = fixture_package();
 
         manager.install_package(package.clone()).unwrap();
@@ -168,7 +213,7 @@ mod tests {
     fn retrieve_active_package_version_reads_metadata() {
         // given:
         let temp_dir = tempdir().unwrap();
-        let manager = PackageManager::new(temp_dir.path().to_string_lossy().into_owned());
+        let manager = PackageManager::new(temp_dir.path().to_path_buf());
         let package = fixture_package();
         manager.install_package(package.clone()).unwrap();
 

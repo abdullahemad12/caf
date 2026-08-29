@@ -1,4 +1,4 @@
-use crate::errors::{CafError, WrapError};
+use crate::errors::{CafError, WrapErrorInResult};
 use crate::utils;
 use fs2::FileExt;
 use std::fs::{self, File};

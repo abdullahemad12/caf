@@ -1,11 +1,9 @@
 use futures::{
     channel::{mpsc, oneshot},
     prelude::*,
+    stream::BoxStream,
 };
-use std::{
-    collections::{hash_map, HashMap, HashSet},
-    pin,
-};
+use std::collections::{hash_map, HashMap, HashSet};
 
 use libp2p::{
     identify, identity, kad,
@@ -15,19 +13,19 @@ use libp2p::{
     swarm::{NetworkBehaviour, Swarm, SwarmEvent},
     tcp, yamux, Multiaddr, PeerId, StreamProtocol,
 };
-use std::{error::Error, time::Duration};
+use std::time::Duration;
 use tokio::spawn;
 
 use crate::{
-    errors::{CafError, WrapError},
-    package,
+    errors::{CafError, WrapError, WrapErrorInResult},
+    pkgman,
 };
 
 #[derive(Debug)]
 pub enum Event {
     InboundRequest {
-        request: package::PackageId,
-        channel: ResponseChannel<package::CompressedPackageContent>,
+        request: pkgman::PackageId,
+        channel: ResponseChannel<pkgman::CompressedPackageContent>,
     },
 }
 
@@ -35,34 +33,34 @@ enum Command {
     Dial {
         peer_id: PeerId,
         peer_addr: Multiaddr,
-        sender: oneshot::Sender<Result<(), Box<dyn Error + Send>>>,
+        sender: oneshot::Sender<Result<(), CafError>>,
     },
     GetProviders {
         package_name: String,
         sender: oneshot::Sender<HashSet<PeerId>>,
     },
     RequestPackage {
-        package_id: package::PackageId,
+        package_id: pkgman::PackageId,
         peer_id: PeerId,
-        sender: oneshot::Sender<Result<package::CompressedPackageContent, Box<dyn Error + Send>>>,
+        sender: oneshot::Sender<Result<pkgman::CompressedPackageContent, CafError>>,
     },
     ResponsePackage {
-        package: package::CompressedPackageContent,
-        channel: ResponseChannel<package::CompressedPackageContent>,
+        package: pkgman::CompressedPackageContent,
+        channel: ResponseChannel<pkgman::CompressedPackageContent>,
     },
     StartProviding {
         package_name: String,
         sender: oneshot::Sender<()>,
     },
     Bootstrap {
-        sender: oneshot::Sender<Result<(), Box<dyn Error + Send>>>,
+        sender: oneshot::Sender<Result<(), CafError>>,
     },
 }
 
 #[derive(NetworkBehaviour)]
 struct Behaviour {
     request_response:
-        request_response::cbor::Behaviour<package::PackageId, package::CompressedPackageContent>,
+        request_response::cbor::Behaviour<pkgman::PackageId, pkgman::CompressedPackageContent>,
     kademlia: kad::Behaviour<kad::store::MemoryStore>,
     identify: identify::Behaviour,
 }
@@ -98,25 +96,22 @@ impl NetworkClient {
     pub async fn request_package(
         &mut self,
         peer_id: PeerId,
-        package_id: package::PackageId,
-    ) -> Result<package::CompressedPackageContent, Box<dyn Error + Send>> {
+        package_id: pkgman::PackageId,
+    ) -> Result<pkgman::CompressedPackageContent, CafError> {
         let (sender, receiver) = oneshot::channel();
         self.sender
             .send(Command::RequestPackage {
-                package_id,
+                package_id: package_id,
                 peer_id,
                 sender,
             })
             .await
             .expect("receiver not to be dropped");
+
         receiver.await.expect("sender not to be dropped")
     }
 
-    pub async fn dial(
-        &mut self,
-        peer_id: PeerId,
-        peer_addr: Multiaddr,
-    ) -> Result<(), Box<dyn Error + Send>> {
+    pub async fn dial(&mut self, peer_id: PeerId, peer_addr: Multiaddr) -> Result<(), CafError> {
         let (sender, receiver) = oneshot::channel();
 
         self.sender
@@ -131,7 +126,7 @@ impl NetworkClient {
         receiver.await.expect("sender not to be dropped")
     }
 
-    pub async fn bootstrap(&mut self) -> Result<(), Box<dyn Error + Send>> {
+    pub async fn bootstrap(&mut self) -> Result<(), CafError> {
         let (sender, receiver) = oneshot::channel();
 
         self.sender
@@ -158,8 +153,8 @@ impl NetworkClient {
 
     pub async fn respond_package(
         &mut self,
-        package: package::CompressedPackageContent,
-        channel: ResponseChannel<package::CompressedPackageContent>,
+        package: pkgman::CompressedPackageContent,
+        channel: ResponseChannel<pkgman::CompressedPackageContent>,
     ) {
         self.sender
             .send(Command::ResponsePackage { package, channel })
@@ -183,8 +178,9 @@ impl NetworkClient {
 }
 
 pub struct Network {
-    stream: pin::Pin<Box<dyn Stream<Item = Event>>>,
+    stream: BoxStream<'static, Event>,
 }
+
 macro_rules! protocol_version {
     () => {
         "0.0.1"
@@ -272,13 +268,13 @@ struct EventLoop {
     swarm: Swarm<Behaviour>,
     command_receiver: mpsc::Receiver<Command>,
     event_sender: mpsc::Sender<Event>,
-    pending_dial: HashMap<PeerId, oneshot::Sender<Result<(), Box<dyn Error + Send>>>>,
-    pending_bootstrap: HashMap<kad::QueryId, oneshot::Sender<Result<(), Box<dyn Error + Send>>>>,
+    pending_dial: HashMap<PeerId, oneshot::Sender<Result<(), CafError>>>,
+    pending_bootstrap: HashMap<kad::QueryId, oneshot::Sender<Result<(), CafError>>>,
     pending_start_providing: HashMap<kad::QueryId, oneshot::Sender<()>>,
     pending_get_providers: HashMap<kad::QueryId, oneshot::Sender<HashSet<PeerId>>>,
     pending_request_package: HashMap<
         OutboundRequestId,
-        oneshot::Sender<Result<package::CompressedPackageContent, Box<dyn Error + Send>>>,
+        oneshot::Sender<Result<pkgman::CompressedPackageContent, CafError>>,
     >,
 }
 
@@ -343,7 +339,7 @@ impl EventLoop {
                 if let Some(peer_id) = peer_id {
                     if let Some(sender) = self.pending_dial.remove(&peer_id) {
                         sender
-                            .send(Err(Box::new(error)))
+                            .send(error.wrap_err("unable to dial peer"))
                             .expect("to send error to the consumer");
                     }
                 }
@@ -432,7 +428,7 @@ impl EventLoop {
 
     async fn process_request_response_event(
         &mut self,
-        event: request_response::Event<package::PackageId, package::CompressedPackageContent>,
+        event: request_response::Event<pkgman::PackageId, pkgman::CompressedPackageContent>,
     ) {
         match event {
             request_response::Event::Message { message, .. } => match message {
@@ -464,7 +460,7 @@ impl EventLoop {
                 self.pending_request_package
                     .remove(&request_id)
                     .expect("request to still be pending")
-                    .send(Err(Box::new(error)))
+                    .send(error.wrap_err("request_response outbound failure"))
                     .expect("channel not to be dropped");
             }
             unhandled => eprintln!("unhandled request_response event {:?}", unhandled),
@@ -490,7 +486,7 @@ impl EventLoop {
                         }
                         Err(err) => {
                             sender
-                                .send(Err(Box::new(err)))
+                                .send(err.wrap_err("swarm dial error"))
                                 .expect("channel not to be dropped");
                         }
                     };

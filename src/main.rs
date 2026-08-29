@@ -3,14 +3,14 @@ use futures::FutureExt;
 use libp2p::{multiaddr::Protocol, Multiaddr};
 use std::{error::Error, fs, io::Write, path::PathBuf};
 
-use crate::errors::{CafError, WrapError};
+use crate::errors::{CafError, WrapErrorInResult};
 
 mod errors;
 mod lock;
 mod network;
-mod package;
 mod pkgman;
 mod utils;
+mod worker;
 
 pub const PROJECT_NAME: &str = env!("CARGO_PKG_NAME");
 
@@ -35,6 +35,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let pkg_man = pkgman::PackageManager::new(get_root_dir_path().unwrap());
 
+    // TODO: make it possible dynamically resolve the bootstrap nodes
     if let Some(addr) = opt.boostrap {
         let Some(Protocol::P2p(peer_id)) = addr.iter().last() else {
             return Err("expect peer multiaddr to contain peer id".into());
@@ -51,7 +52,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .expect("bootstrap to succeed");
     }
 
-    match opt.argument {
+    let mut caf_worker = worker::CafWorker::new(pkg_man, ntwrk, ntwrk_client);
+
+    tokio::join!(caf_worker.start_pkg_provider(),);
+
+    /*match opt.argument {
         CliArgument::Provide { name, .. } => {
             ntwrk_client.start_providing(name.clone()).await;
 
@@ -102,7 +107,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
             std::io::stdout().write_all(&package.0)?;
         }
-    };
+    };*/
 
     Ok(())
 }

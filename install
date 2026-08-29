@@ -1,0 +1,5 @@
+# Maybe the caf name should be dynamically retrieved from the package name
+sudo groupadd --system caf
+sudo useradd --system --gid caf --shell /usr/sbin/nologin caf
+mkdir /home/caf
+chown -R caf:caf /home/caf
