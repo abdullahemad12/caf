@@ -15,14 +15,15 @@ RUN npm install -g @google/gemini-cli
 RUN apt-get update && apt-get install -y \
     git \
     pkg-config \
-    libssl-dev
+    libssl-dev \
+    build-essential
 
 RUN curl https://sh.rustup.rs -sSf | sh -s -- -y
 
+ENV PATH="/root/.cargo/bin:$PATH"
+
 # Set default directory
 WORKDIR /workspace
-
-RUN time curl -s https://generativelanguage.googleapis.com
 
 # IMPORTANT: The installed binary name is "gemini", not "gemini-cli"
 ENTRYPOINT ["gemini"]

@@ -1,4 +1,4 @@
-use std::{error::Error, path::PathBuf};
+use std::path::PathBuf;
 
 const PROJECT_NAME: &str = env!("CARGO_PKG_NAME");
 

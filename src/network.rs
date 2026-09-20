@@ -3,7 +3,10 @@ use futures::{
     prelude::*,
     stream::BoxStream,
 };
-use std::collections::{hash_map, HashMap, HashSet};
+use std::{
+    collections::{hash_map, HashMap, HashSet},
+    str::FromStr,
+};
 
 use libp2p::{
     identify, identity, kad,
@@ -29,10 +32,30 @@ pub enum Event {
     },
 }
 
+#[derive(Debug, Clone)]
+pub struct Peer {
+    id: PeerId,
+    addr: Multiaddr,
+}
+
+impl FromStr for Peer {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let addr = Multiaddr::from_str(s).map_err(|err| err.to_string())?;
+
+        let id = match addr.iter().last() {
+            Some(Protocol::P2p(peer_id)) => peer_id,
+            _ => return Err("expected peer multiaddr to contain peer id".into()),
+        };
+
+        Ok(Peer { id, addr })
+    }
+}
+
 enum Command {
     Dial {
-        peer_id: PeerId,
-        peer_addr: Multiaddr,
+        peer: Peer,
         sender: oneshot::Sender<Result<(), CafError>>,
     },
     GetProviders {
@@ -111,15 +134,11 @@ impl NetworkClient {
         receiver.await.expect("sender not to be dropped")
     }
 
-    pub async fn dial(&mut self, peer_id: PeerId, peer_addr: Multiaddr) -> Result<(), CafError> {
+    pub async fn dial(&mut self, peer: Peer) -> Result<(), CafError> {
         let (sender, receiver) = oneshot::channel();
 
         self.sender
-            .send(Command::Dial {
-                peer_id: peer_id,
-                peer_addr: peer_addr,
-                sender: sender,
-            })
+            .send(Command::Dial { peer, sender })
             .await
             .expect("command receiver not to be dropped");
 
@@ -469,18 +488,14 @@ impl EventLoop {
 
     async fn process_command(&mut self, command: Command) {
         match command {
-            Command::Dial {
-                peer_id,
-                peer_addr,
-                sender,
-            } => match self.pending_dial.entry(peer_id) {
+            Command::Dial { peer, sender } => match self.pending_dial.entry(peer.id) {
                 hash_map::Entry::Vacant(entry) => {
                     self.swarm
                         .behaviour_mut()
                         .kademlia
-                        .add_address(&peer_id, peer_addr.clone());
+                        .add_address(&peer.id, peer.addr.clone());
 
-                    match self.swarm.dial(peer_addr.with(Protocol::P2p(peer_id))) {
+                    match self.swarm.dial(peer.addr.with(Protocol::P2p(peer.id))) {
                         Ok(()) => {
                             entry.insert(sender);
                         }
@@ -492,7 +507,7 @@ impl EventLoop {
                     };
                 }
                 hash_map::Entry::Occupied(_) => {
-                    eprintln!("already dialing the peer {:?}", peer_id);
+                    eprintln!("already dialing the peer {:?}", peer.id);
                 }
             },
             Command::GetProviders {

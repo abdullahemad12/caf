@@ -51,17 +51,27 @@ impl PackageManager {
     const CONTENT_FILE_NAME: &'static str = "pkg.zip";
     const METADATA_FILE_NAME: &'static str = "metadata.json";
 
+    fn get_packages_dir_path(&self) -> PathBuf {
+        self.root_dir.join(PackageManager::PKGS_PATH)
+    }
+
     fn get_package_path(&self, package_name: &String) -> PathBuf {
-        self.root_dir
-            .join(PackageManager::PKGS_PATH)
-            .join(package_name)
+        self.get_packages_dir_path().join(package_name)
     }
 
-    pub fn new(root_dir: PathBuf) -> Self {
-        return PackageManager { root_dir };
+    pub fn new(root_dir: PathBuf) -> Result<Self, CafError> {
+        if !root_dir.is_dir() {
+            return Err(CafError::new("{} is not a valid directory"));
+        }
+
+        let pkgman = PackageManager { root_dir };
+
+        fs::create_dir_all(pkgman.get_packages_dir_path())
+            .wrap_err("unable to create the packages directory")?;
+
+        Ok(pkgman)
     }
 
-    // The design needs to be reworked https://chatgpt.com/c/6a80b9d5-3ce0-83eb-b1a4-04ef0cd92d3f
     pub fn install_package(&self, package: Package) -> Result<(), CafError> {
         let pkg_path = self.get_package_path(&package.id.name);
         let install_path = pkg_path.join(package.id.version.clone());
@@ -138,6 +148,90 @@ impl PackageManager {
             name: metadata.name,
             version: metadata.active_version,
         });
+    }
+
+    pub fn all_package_ids_iter(&self) -> Result<impl Iterator<Item = PackageId>, CafError> {
+        let packages_dir = self.get_packages_dir_path();
+
+        Ok(fs::read_dir(self.get_packages_dir_path())
+            .wrap_err(format!(
+                "unable to read subdirectories of {}",
+                packages_dir.to_string_lossy()
+            ))?
+            .flat_map(move |pkg_res| {
+                let pkg = match pkg_res {
+                    Ok(pkg) => pkg,
+                    Err(err) => {
+                        // TODO: maybe this needs to be reported better than this
+                        eprintln!(
+                            "unable to read subdirectory of {}: {}",
+                            packages_dir.to_string_lossy(),
+                            err
+                        );
+                        return vec![];
+                    }
+                };
+
+                let versions = match fs::read_dir(pkg.path()) {
+                    Ok(pkg_dirs) => pkg_dirs,
+                    Err(err) => {
+                        // TODO: maybe this needs to be reported better than this
+                        eprintln!(
+                            "unable to read subdirectory of {}: {}",
+                            pkg.path().to_string_lossy(),
+                            err
+                        );
+
+                        return vec![];
+                    }
+                };
+
+                versions
+                    .filter_map(|version_res| {
+                        let version = match version_res {
+                            Ok(it) => it,
+                            Err(err) => {
+                                // TODO: maybe this needs to be reported better than this
+                                eprintln!(
+                                    "unable to read subdirectory of {}: {}",
+                                    pkg.path().to_string_lossy(),
+                                    err
+                                );
+                                return None;
+                            }
+                        };
+
+                        if !version.path().is_dir() {
+                            None
+                        } else {
+                            Some(PackageId {
+                                name: pkg
+                                    .file_name()
+                                    .to_str()
+                                    .or_else(|| {
+                                        eprintln!(
+                                            "package name is not a valid unicode: {}",
+                                            pkg.file_name().to_string_lossy()
+                                        );
+                                        None
+                                    })?
+                                    .to_string(),
+                                version: version
+                                    .file_name()
+                                    .to_str()
+                                    .or_else(|| {
+                                        eprintln!(
+                                            "version name is not a valid unicode: {}",
+                                            pkg.file_name().to_string_lossy()
+                                        );
+                                        None
+                                    })?
+                                    .to_string(),
+                            })
+                        }
+                    })
+                    .collect()
+            }))
     }
 }
 
