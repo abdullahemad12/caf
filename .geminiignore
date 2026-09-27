@@ -1,2 +1,5 @@
 target/
 .git/
+Cargo.lock
+LICENSE
+chat_history.txt
