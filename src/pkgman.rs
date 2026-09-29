@@ -254,7 +254,7 @@ mod tests {
     fn install_package_writes_content_and_metadata() {
         // given:
         let temp_dir = tempdir().unwrap();
-        let manager = PackageManager::new(temp_dir.path().to_path_buf());
+        let manager = PackageManager::new(temp_dir.path().to_path_buf()).unwrap();
         let package = fixture_package();
 
         // when:
@@ -291,7 +291,7 @@ mod tests {
     fn retrieve_package_returns_stored_package() {
         // given:
         let temp_dir = tempdir().unwrap();
-        let manager = PackageManager::new(temp_dir.path().to_path_buf());
+        let manager = PackageManager::new(temp_dir.path().to_path_buf()).unwrap();
         let package = fixture_package();
 
         manager.install_package(package.clone()).unwrap();
@@ -307,7 +307,7 @@ mod tests {
     fn retrieve_active_package_version_reads_metadata() {
         // given:
         let temp_dir = tempdir().unwrap();
-        let manager = PackageManager::new(temp_dir.path().to_path_buf());
+        let manager = PackageManager::new(temp_dir.path().to_path_buf()).unwrap();
         let package = fixture_package();
         manager.install_package(package.clone()).unwrap();
 
@@ -318,5 +318,89 @@ mod tests {
 
         // then:
         assert_eq!(active, package.id);
+    }
+
+    #[test]
+    fn all_package_ids_iter_empty() {
+        // given:
+        let temp_dir = tempdir().unwrap();
+        let manager = PackageManager::new(temp_dir.path().to_path_buf()).unwrap();
+
+        // when:
+        let ids: Vec<PackageId> = manager.all_package_ids_iter().unwrap().collect();
+
+        // then:
+        assert!(ids.is_empty());
+    }
+
+    #[test]
+    fn all_package_ids_iter_multiple_packages_and_versions() {
+        // given:
+        let temp_dir = tempdir().unwrap();
+        let manager = PackageManager::new(temp_dir.path().to_path_buf()).unwrap();
+
+        let pkgs = vec![
+            PackageId {
+                name: "a".into(),
+                version: "1.0.0".into(),
+            },
+            PackageId {
+                name: "a".into(),
+                version: "1.1.0".into(),
+            },
+            PackageId {
+                name: "b".into(),
+                version: "0.1.0".into(),
+            },
+        ];
+
+        for pkg_id in &pkgs {
+            manager
+                .install_package(Package {
+                    id: pkg_id.clone(),
+                    content: CompressedPackageContent(vec![0]),
+                })
+                .unwrap();
+        }
+
+        // when:
+        let mut ids: Vec<PackageId> = manager.all_package_ids_iter().unwrap().collect();
+
+        // then:
+        ids.sort_by(|a, b| a.name.cmp(&b.name).then(a.version.cmp(&b.version)));
+
+        let mut expected = pkgs;
+        expected.sort_by(|a, b| a.name.cmp(&b.name).then(a.version.cmp(&b.version)));
+
+        assert_eq!(ids, expected);
+    }
+
+    #[test]
+    fn all_package_ids_iter_ignores_non_directory_files() {
+        // given:
+        let temp_dir = tempdir().unwrap();
+        let manager = PackageManager::new(temp_dir.path().to_path_buf()).unwrap();
+
+        let pkgs_dir = temp_dir.path().join("pkgs");
+        fs::create_dir_all(&pkgs_dir).unwrap();
+
+        // A file in pkgs dir should be ignored (it might print an error but should not return it)
+        fs::write(pkgs_dir.join("random_file"), "content").unwrap();
+
+        // A package dir with a file and a version dir
+        let pkg_dir = pkgs_dir.join("pkg_a");
+        fs::create_dir_all(&pkg_dir).unwrap();
+        fs::write(pkg_dir.join("metadata.json"), "{}").unwrap();
+
+        let version_dir = pkg_dir.join("1.0.0");
+        fs::create_dir_all(&version_dir).unwrap();
+
+        // when:
+        let ids: Vec<PackageId> = manager.all_package_ids_iter().unwrap().collect();
+
+        // then:
+        assert_eq!(ids.len(), 1);
+        assert_eq!(ids[0].name, "pkg_a");
+        assert_eq!(ids[0].version, "1.0.0");
     }
 }

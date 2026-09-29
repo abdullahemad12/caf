@@ -56,7 +56,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let (_, consumer_res) = tokio::join!(provider, consumer);
         consumer_res?;
     } else {
-        provider.await
+        provider.await?
     }
 
     Ok(())
