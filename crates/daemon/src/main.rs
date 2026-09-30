@@ -5,15 +5,16 @@ use std::{error::Error, fs, path::PathBuf};
 use crate::{
     errors::{CafError, WrapErrorInResult},
     network::Peer,
-    worker::{bootstrap, start_pkg_consumer, start_pkg_provider},
+    provider::{bootstrap, start_pkg_consumer, start_pkg_provider},
 };
 
+mod cli_server;
 mod errors;
 mod lock;
 mod network;
 mod pkgman;
+mod provider;
 mod utils;
-mod worker;
 
 pub const PROJECT_NAME: &str = env!("CARGO_PKG_NAME");
 

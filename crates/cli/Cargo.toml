@@ -1,0 +1,10 @@
+[package]
+name = "caf-cli"
+version = "0.0.0"
+edition = "2024"
+
+[dependencies]
+protocol = { path = "../protocol" }
+
+
+[dev-dependencies]

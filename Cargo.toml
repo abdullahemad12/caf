@@ -1,17 +1,8 @@
-[package]
-name = "caf"
-version = "0.1.0"
-edition = "2024"
-default-run = "caf"
+[workspace]
+members = [
+    "crates/cli",
+    "crates/daemon",
+    "crates/protocol",
+]
 
-[dependencies]
-serde = { version = "1.0", features = ["derive"] }
-futures = "0.3"
-libp2p = { version = "0.54", features = [ "tokio", "cbor", "dns", "kad", "noise", "macros", "request-response", "tcp", "websocket", "yamux", "identify"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
-clap = { version = "4", features = ["derive"] }
-serde_json = "1.0.148"
-fs2 = "0.4.3"
-
-[dev-dependencies]
-tempfile = "3"
+resolver = "2"

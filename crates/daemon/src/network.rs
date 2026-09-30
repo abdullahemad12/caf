@@ -263,6 +263,7 @@ impl Network {
                 network_conf.client_address
             ))?;
 
+        // TODO: maybe increase the buffer size of the channel
         let (command_sender, command_receiver) = mpsc::channel(0);
         let (event_sender, event_receiver) = mpsc::channel(0);
 

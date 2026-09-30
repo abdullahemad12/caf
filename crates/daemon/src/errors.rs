@@ -1,3 +1,4 @@
+// This should not have a dependency on any other module from this project
 use std::{error::Error, fmt};
 
 #[derive(Debug)]
