@@ -1,11 +1,7 @@
-use crate::errors::{CafError, WrapErrorInResult};
+use observability::error::{CafError, CafErrorCode, WrapErrorInResult};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
-
-pub struct PackageManager {
-    root_dir: PathBuf,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct PackageMetadata {
@@ -41,18 +37,17 @@ impl std::fmt::Display for Package {
     }
 }
 
-// Design:
-// all packages are stored as
-//  /root_dir/pkgs/{package_name}/{package_version}/content.zip
-// each package has a metadata file stored at
-//  /root_dir/pkgs/{package_name}/metadata.json
-impl PackageManager {
+pub struct ReadOnlyPackageManager {
+    root_dir: PathBuf,
+}
+
+impl ReadOnlyPackageManager {
     const PKGS_PATH: &'static str = "pkgs";
     const CONTENT_FILE_NAME: &'static str = "pkg.zip";
     const METADATA_FILE_NAME: &'static str = "metadata.json";
 
     fn get_packages_dir_path(&self) -> PathBuf {
-        self.root_dir.join(PackageManager::PKGS_PATH)
+        self.root_dir.join(ReadOnlyPackageManager::PKGS_PATH)
     }
 
     fn get_package_path(&self, package_name: &String) -> PathBuf {
@@ -61,10 +56,13 @@ impl PackageManager {
 
     pub fn new(root_dir: PathBuf) -> Result<Self, CafError> {
         if !root_dir.is_dir() {
-            return Err(CafError::new("{} is not a valid directory"));
+            return Err(CafError::new(
+                CafErrorCode::InvalidConfig,
+                "{} is not a valid directory",
+            ));
         }
 
-        let pkgman = PackageManager { root_dir };
+        let pkgman = ReadOnlyPackageManager { root_dir };
 
         fs::create_dir_all(pkgman.get_packages_dir_path())
             .wrap_err("unable to create the packages directory")?;
@@ -72,56 +70,19 @@ impl PackageManager {
         Ok(pkgman)
     }
 
-    pub fn install_package(&self, package: Package) -> Result<(), CafError> {
-        let pkg_path = self.get_package_path(&package.id.name);
-        let install_path = pkg_path.join(package.id.version.clone());
-
-        let metadata_json = serde_json::to_string_pretty(&PackageMetadata {
-            name: package.id.name.clone(),
-            active_version: package.id.version.clone(),
-        })
-        .wrap_err(format!(
-            "unable to serialize the package metadata into JSON for package {}",
-            package.id
-        ))?;
-
-        fs::create_dir_all(&install_path).wrap_err(format!(
-            "unable to create the package directory for package {}",
-            package.id
-        ))?;
-
-        let installed_package_path = install_path.join(PackageManager::CONTENT_FILE_NAME);
-        fs::write(installed_package_path.clone(), package.content.0).wrap_err(format!(
-            "unabel to write the file content of the package {} to the file {}",
-            package.id,
-            installed_package_path.to_string_lossy(),
-        ))?;
-
-        fs::write(
-            pkg_path.join(PackageManager::METADATA_FILE_NAME),
-            metadata_json,
-        )
-        .wrap_err(format!(
-            "unable to write the package metadata for package {}",
-            package.id
-        ))?;
-
-        Ok(())
-    }
-
     pub fn retrieve_package(&self, request: &PackageId) -> Result<Package, CafError> {
         let pkg_content_path = self
             .get_package_path(&request.name)
             .join(&request.version)
-            .join(PackageManager::CONTENT_FILE_NAME);
+            .join(ReadOnlyPackageManager::CONTENT_FILE_NAME);
 
         let content =
             fs::read(pkg_content_path).wrap_err("unable to retrieve the package from the db")?;
 
-        return Ok(Package {
+        Ok(Package {
             id: request.clone(),
             content: CompressedPackageContent(content),
-        });
+        })
     }
 
     pub fn retrieve_active_package_version(
@@ -129,25 +90,31 @@ impl PackageManager {
         package_name: &String,
     ) -> Result<PackageId, CafError> {
         let metadata_file = fs::File::open(
-            self.get_package_path(&package_name)
-                .join(PackageManager::METADATA_FILE_NAME),
+            self.get_package_path(package_name)
+                .join(ReadOnlyPackageManager::METADATA_FILE_NAME),
         )
-        .wrap_err(format!(
-            "unable to open the metadata file for the package version retrieval of package {}",
-            package_name,
-        ))?;
+        .wrap_err_with_code(
+            CafErrorCode::PackageNotFound,
+            format!(
+                "unable to open the metadata file for the package version retrieval of package {}",
+                package_name,
+            ),
+        )?;
 
         let reader = std::io::BufReader::new(metadata_file);
 
-        let metadata: PackageMetadata = serde_json::from_reader(reader).wrap_err(format!(
-            "unable to serialize the package metadata into JSON for package {}",
-            package_name,
-        ))?;
+        let metadata: PackageMetadata = serde_json::from_reader(reader).wrap_err_with_code(
+            CafErrorCode::BrokenDatabaseState,
+            format!(
+                "unable to serialize the package metadata into JSON for package {}",
+                package_name,
+            ),
+        )?;
 
-        return Ok(PackageId {
+        Ok(PackageId {
             name: metadata.name,
             version: metadata.active_version,
-        });
+        })
     }
 
     pub fn all_package_ids_iter(&self) -> Result<impl Iterator<Item = PackageId>, CafError> {
@@ -235,6 +202,78 @@ impl PackageManager {
     }
 }
 
+pub struct PackageManager {
+    read_only_pkgman: ReadOnlyPackageManager,
+}
+
+// Design:
+// all packages are stored as
+//  /root_dir/pkgs/{package_name}/{package_version}/content.zip
+// each package has a metadata file stored at
+//  /root_dir/pkgs/{package_name}/metadata.json
+impl PackageManager {
+    pub fn new(root_dir: PathBuf) -> Result<Self, CafError> {
+        let read_only_pkgman = ReadOnlyPackageManager::new(root_dir.clone())?;
+        Ok(PackageManager { read_only_pkgman })
+    }
+
+    pub fn install_package(&self, package: Package) -> Result<(), CafError> {
+        let pkg_path = self.read_only_pkgman.get_package_path(&package.id.name);
+        let install_path = pkg_path.join(package.id.version.clone());
+
+        let metadata_json = serde_json::to_string_pretty(&PackageMetadata {
+            name: package.id.name.clone(),
+            active_version: package.id.version.clone(),
+        })
+        .wrap_err_with_code(
+            CafErrorCode::BrokenDatabaseState,
+            format!(
+                "unable to serialize the package metadata into JSON for package {}",
+                package.id
+            ),
+        )?;
+
+        fs::create_dir_all(&install_path).wrap_err(format!(
+            "unable to create the package directory for package {}",
+            package.id
+        ))?;
+
+        let installed_package_path = install_path.join(ReadOnlyPackageManager::CONTENT_FILE_NAME);
+        fs::write(installed_package_path.clone(), package.content.0).wrap_err(format!(
+            "unabel to write the file content of the package {} to the file {}",
+            package.id,
+            installed_package_path.to_string_lossy(),
+        ))?;
+
+        fs::write(
+            pkg_path.join(ReadOnlyPackageManager::METADATA_FILE_NAME),
+            metadata_json,
+        )
+        .wrap_err(format!(
+            "unable to write the package metadata for package {}",
+            package.id
+        ))?;
+
+        Ok(())
+    }
+
+    pub fn retrieve_package(&self, request: &PackageId) -> Result<Package, CafError> {
+        self.read_only_pkgman.retrieve_package(request)
+    }
+
+    pub fn retrieve_active_package_version(
+        &self,
+        package_name: &String,
+    ) -> Result<PackageId, CafError> {
+        self.read_only_pkgman
+            .retrieve_active_package_version(package_name)
+    }
+
+    pub fn all_package_ids_iter(&self) -> Result<impl Iterator<Item = PackageId>, CafError> {
+        self.read_only_pkgman.all_package_ids_iter()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -267,12 +306,12 @@ mod tests {
             .join(&package.id.name)
             .join(&package.id.version);
 
-        let content_path = install_path.join(PackageManager::CONTENT_FILE_NAME);
+        let content_path = install_path.join(ReadOnlyPackageManager::CONTENT_FILE_NAME);
 
         let metadata_path = install_path
             .parent()
             .unwrap()
-            .join(PackageManager::METADATA_FILE_NAME);
+            .join(ReadOnlyPackageManager::METADATA_FILE_NAME);
 
         assert!(content_path.exists());
         assert_eq!(fs::read(content_path).unwrap(), package.content.0);

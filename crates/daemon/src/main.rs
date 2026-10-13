@@ -1,22 +1,22 @@
 use clap::Parser;
 use libp2p::Multiaddr;
-use std::{error::Error, fs, path::PathBuf};
+use observability::error::{CafError, WrapErrorInResult};
+use std::{fs, path::PathBuf};
 
 use crate::{
-    errors::{CafError, WrapErrorInResult},
+    cli_server::CliServer,
     network::Peer,
-    provider::{bootstrap, start_pkg_consumer, start_pkg_provider},
+    provider::{bootstrap, start_pkg_provider},
 };
 
 mod cli_server;
-mod errors;
 mod lock;
 mod network;
 mod pkgman;
 mod provider;
 mod utils;
 
-pub const PROJECT_NAME: &str = env!("CARGO_PKG_NAME");
+pub const PROJECT_NAME: &str = "caf";
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -36,29 +36,32 @@ struct Opt {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
+async fn main() -> Result<(), CafError> {
     let opt = Opt::parse();
 
-    lock::acquire_caf_lock().unwrap();
+    // storing the lock in a variable ensures
+    // that the file is not dropped until the
+    // main function exists
+    let _caf_lock = lock::acquire_caf_lock().unwrap();
 
     let (mut ntwrk, ntwrk_client) = network::Network::init(network::NetworkConfig::new()).unwrap();
 
-    let pkg_man = pkgman::PackageManager::new(get_root_dir_path(opt.home_dir).unwrap()).unwrap();
+    let read_pkgman =
+        pkgman::ReadOnlyPackageManager::new(get_root_dir_path(opt.home_dir.clone())?)?;
 
     let mut provider_client = ntwrk_client.clone();
-    let provider = start_pkg_provider(&pkg_man, &mut ntwrk, &mut provider_client);
+    let provider = start_pkg_provider(read_pkgman, &mut ntwrk, &mut provider_client);
     if !opt.no_bootstrap {
-        bootstrap(opt.bootstrap_nodes, &mut ntwrk_client.clone())
-            .await
-            .unwrap();
-
-        let mut consumer_client = ntwrk_client.clone();
-        let consumer = start_pkg_consumer(&pkg_man, &mut consumer_client);
-        let (_, consumer_res) = tokio::join!(provider, consumer);
-        consumer_res?;
-    } else {
-        provider.await?
+        bootstrap(opt.bootstrap_nodes, &mut ntwrk_client.clone()).await?
     }
+
+    let pkg_man = pkgman::PackageManager::new(get_root_dir_path(opt.home_dir.clone())?)?;
+
+    let cli_server = CliServer::start(pkg_man, ntwrk_client.clone());
+
+    let (provider_res, cli_server_res) = tokio::join!(provider, cli_server);
+    provider_res?;
+    cli_server_res?;
 
     Ok(())
 }

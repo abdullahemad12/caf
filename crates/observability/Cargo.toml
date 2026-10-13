@@ -1,0 +1,12 @@
+[package]
+name = "observability"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+strum = { version = "0.28", features = ["derive"] }
+tonic = "0.14"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-appender = "0.2"
+directories = "6.0"

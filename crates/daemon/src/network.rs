@@ -4,25 +4,24 @@ use futures::{
     stream::BoxStream,
 };
 use std::{
-    collections::{hash_map, HashMap, HashSet},
+    collections::{HashMap, HashSet, hash_map},
     str::FromStr,
 };
 
 use libp2p::{
-    identify, identity, kad,
+    Multiaddr, PeerId, StreamProtocol, identify, identity, kad,
     multiaddr::Protocol,
     noise,
     request_response::{self, OutboundRequestId, ProtocolSupport, ResponseChannel},
     swarm::{NetworkBehaviour, Swarm, SwarmEvent},
-    tcp, yamux, Multiaddr, PeerId, StreamProtocol,
+    tcp, yamux,
 };
 use std::time::Duration;
 use tokio::spawn;
 
-use crate::{
-    errors::{CafError, WrapError, WrapErrorInResult},
-    pkgman,
-};
+use crate::pkgman;
+
+use observability::error::{CafError, CafErrorCode, WrapError, WrapErrorInResult};
 
 #[derive(Debug)]
 pub enum Event {
@@ -113,7 +112,7 @@ pub struct NetworkClient {
 
 impl NetworkClient {
     fn new(sender: mpsc::Sender<Command>) -> Self {
-        return NetworkClient { sender };
+        NetworkClient { sender }
     }
 
     pub async fn request_package(
@@ -124,7 +123,7 @@ impl NetworkClient {
         let (sender, receiver) = oneshot::channel();
         self.sender
             .send(Command::RequestPackage {
-                package_id: package_id,
+                package_id,
                 peer_id,
                 sender,
             })
@@ -222,7 +221,7 @@ impl Network {
                 noise::Config::new,
                 yamux::Config::default,
             )
-            .wrap_err("unable to open tcp socket")?
+            .wrap_err_with_code(CafErrorCode::NetworkFailure, "unable to open tcp socket")?
             .with_behaviour(|key| Behaviour {
                 kademlia: kad::Behaviour::new(
                     peer_id,
@@ -256,12 +255,15 @@ impl Network {
                 network_conf
                     .client_address
                     .parse()
-                    .wrap_err("unable to parse address")?,
+                    .wrap_err_with_code(CafErrorCode::InvalidConfig, "unable to parse address")?,
             )
-            .wrap_err(format!(
-                "unable to listen on the given address {}",
-                network_conf.client_address
-            ))?;
+            .wrap_err_with_code(
+                CafErrorCode::NetworkFailure,
+                format!(
+                    "unable to listen on the given address {}",
+                    network_conf.client_address
+                ),
+            )?;
 
         // TODO: maybe increase the buffer size of the channel
         let (command_sender, command_receiver) = mpsc::channel(0);
@@ -348,20 +350,23 @@ impl EventLoop {
             SwarmEvent::ConnectionEstablished {
                 peer_id, endpoint, ..
             } => {
-                if endpoint.is_dialer() {
-                    if let Some(sender) = self.pending_dial.remove(&peer_id) {
-                        let _ = sender.send(Ok(()));
-                    }
+                if endpoint.is_dialer()
+                    && let Some(sender) = self.pending_dial.remove(&peer_id)
+                {
+                    let _ = sender.send(Ok(()));
                 }
             }
             SwarmEvent::ConnectionClosed { .. } => {}
             SwarmEvent::OutgoingConnectionError { peer_id, error, .. } => {
-                if let Some(peer_id) = peer_id {
-                    if let Some(sender) = self.pending_dial.remove(&peer_id) {
-                        sender
-                            .send(error.wrap_err("unable to dial peer"))
-                            .expect("to send error to the consumer");
-                    }
+                if let Some(peer_id) = peer_id
+                    && let Some(sender) = self.pending_dial.remove(&peer_id)
+                {
+                    sender
+                        .send(error.wrap_err_with_code(
+                            CafErrorCode::NetworkFailure,
+                            "unable to dial peer",
+                        ))
+                        .expect("to send error to the consumer");
                 }
             }
             SwarmEvent::IncomingConnectionError { error, .. } => {
@@ -456,10 +461,7 @@ impl EventLoop {
                     request, channel, ..
                 } => {
                     self.event_sender
-                        .send(Event::InboundRequest {
-                            request: request,
-                            channel,
-                        })
+                        .send(Event::InboundRequest { request, channel })
                         .await
                         .expect("event_sender not to be dropped");
                 }
@@ -480,7 +482,10 @@ impl EventLoop {
                 self.pending_request_package
                     .remove(&request_id)
                     .expect("request to still be pending")
-                    .send(error.wrap_err("request_response outbound failure"))
+                    .send(error.wrap_err_with_code(
+                        CafErrorCode::NetworkFailure,
+                        "request_response outbound failure",
+                    ))
                     .expect("channel not to be dropped");
             }
             unhandled => eprintln!("unhandled request_response event {:?}", unhandled),
@@ -502,7 +507,10 @@ impl EventLoop {
                         }
                         Err(err) => {
                             sender
-                                .send(err.wrap_err("swarm dial error"))
+                                .send(err.wrap_err_with_code(
+                                    CafErrorCode::NetworkFailure,
+                                    "swarm dial error",
+                                ))
                                 .expect("channel not to be dropped");
                         }
                     };

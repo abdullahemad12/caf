@@ -1,7 +1,7 @@
-use crate::errors::{CafError, WrapErrorInResult};
 use crate::utils;
 use fs2::FileExt;
-use std::fs::{self, File};
+use observability::error::{CafError, CafErrorCode, WrapErrorInResult};
+use std::fs::{self, File, OpenOptions};
 
 const LOCK_FILE_NAME: &str = "caf.lock";
 
@@ -17,11 +17,19 @@ pub fn acquire_caf_lock() -> Result<CafLock, CafError> {
         fs::create_dir_all(parent).wrap_err("failed to create lock directory in tmp dir")?;
     }
 
-    let file = File::create(lock_path).wrap_err("unable to create lock file")?;
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&lock_path)
+        .wrap_err("unable to open lock file")?;
 
     // try_lock_exclusive returns an error if another process holds the lock
-    file.try_lock_exclusive()
-        .wrap_err("unable to exclusively lock the lock file")?;
+    file.try_lock_exclusive().wrap_err_with_code(
+        CafErrorCode::AnotherInstanceRunning,
+        "unable to exclusively lock the lock file",
+    )?;
 
     Ok(CafLock { _file: file })
 }
@@ -29,7 +37,7 @@ pub fn acquire_caf_lock() -> Result<CafLock, CafError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{mpsc, Mutex, OnceLock};
+    use std::sync::{Mutex, OnceLock, mpsc};
     use std::thread;
     use std::time::Duration;
 
@@ -73,7 +81,10 @@ mod tests {
         let lock2 = acquire_caf_lock();
         assert!(lock2.is_err());
         let err = lock2.unwrap_err();
-        assert!(err.to_string().contains("unable to exclusively lock the lock file"));
+        assert!(
+            err.to_string()
+                .contains("unable to exclusively lock the lock file")
+        );
 
         // and when: we drop the first lock
         drop(_lock1);

@@ -5,6 +5,10 @@ edition = "2024"
 
 [dependencies]
 protocol = { path = "../protocol" }
+observability = { path = "../observability" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
+clap = { version = "4", features = ["derive"] }
+tonic = "0.14"
 
 
 [dev-dependencies]

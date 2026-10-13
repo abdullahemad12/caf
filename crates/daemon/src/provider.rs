@@ -1,8 +1,8 @@
-use futures::{future, FutureExt};
+use futures::future;
 
-use crate::errors::{CafError, WrapErrorInResult};
 use crate::network::{Event, Network, NetworkClient, Peer};
-use crate::pkgman::{Package, PackageId, PackageManager};
+use crate::pkgman::ReadOnlyPackageManager;
+use observability::error::{CafError, CafErrorCode, WrapErrorInResult};
 
 pub async fn bootstrap(
     preconfigured_bootstrap_peers: Vec<Peer>,
@@ -10,6 +10,7 @@ pub async fn bootstrap(
 ) -> Result<(), CafError> {
     if preconfigured_bootstrap_peers.is_empty() {
         return Err(CafError::new(
+            CafErrorCode::Todo,
             "TODO: dynamic resolving of bootstrap peers. For now needs to be provided manually",
         ));
     }
@@ -23,14 +24,14 @@ pub async fn bootstrap(
 
     ntwrk_client.bootstrap().await?;
 
-    return Ok(());
+    Ok(())
 }
 
 // TODO: this should loop over all packages and register them in kademlia
 // if the number of packages exceeds some limit, maybe pick a random set every
 // 10 minutes or so to provide
 async fn register_provided_packages(
-    pkgman: &PackageManager,
+    pkgman: &ReadOnlyPackageManager,
     ntwrk_client: &mut NetworkClient,
 ) -> Result<(), CafError> {
     let futures = pkgman.all_package_ids_iter()?.map(async |package_id| {
@@ -46,11 +47,11 @@ async fn register_provided_packages(
 }
 
 pub async fn start_pkg_provider(
-    pkgman: &PackageManager,
+    pkgman: ReadOnlyPackageManager,
     ntwrk: &mut Network,
     ntwrk_client: &mut NetworkClient,
 ) -> Result<(), CafError> {
-    register_provided_packages(pkgman, ntwrk_client).await?;
+    register_provided_packages(&pkgman, ntwrk_client).await?;
     loop {
         match ntwrk.next_event().await {
             Event::InboundRequest { request, channel } => {
