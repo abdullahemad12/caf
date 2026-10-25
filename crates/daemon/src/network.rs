@@ -338,8 +338,8 @@ impl EventLoop {
             SwarmEvent::Behaviour(BehaviourEvent::Identify(event)) => {
                 self.process_identify_event(event).await;
             }
-            SwarmEvent::NewListenAddr { address, .. } => eprintln!(
-                "Local node is already listening on {:?}",
+            SwarmEvent::NewListenAddr { address, .. } => tracing::error!(
+                "local node listening on: {:?}",
                 address.with(Protocol::P2p(*self.swarm.local_peer_id()))
             ),
             SwarmEvent::IncomingConnection { .. } => {}
@@ -366,13 +366,13 @@ impl EventLoop {
                 }
             }
             SwarmEvent::IncomingConnectionError { error, .. } => {
-                eprintln!("incoming connection error {:?}", error)
+                tracing::error!("incoming connection error: {error:?}")
             }
             SwarmEvent::Dialing {
                 peer_id: Some(peer_id),
                 ..
-            } => println!("Dialing peer {}", peer_id),
-            unhandled => eprintln!("unhandled event {:?}", unhandled),
+            } => tracing::info!("dialing peer: {peer_id}"),
+            unhandled => tracing::error!("unhandled event: {unhandled:?}"),
         }
     }
 
@@ -386,7 +386,7 @@ impl EventLoop {
                         .add_address(&peer_id, addr.clone());
                 });
             }
-            _ => eprintln!("unhandled identify event: {:?}", event),
+            _ => tracing::error!("unhandled identify event: {event:?}"),
         }
     }
 
@@ -442,8 +442,8 @@ impl EventLoop {
                     )),
                 ..
             } => {}
-            kad::Event::InboundRequest { request } => println!("Inbound request {:?}", request),
-            unhandled => eprintln!("unhandled kademlia event: {:?}", unhandled),
+            kad::Event::InboundRequest { request } => tracing::info!("inbound request: {request:?}"),
+            unhandled => tracing::error!("unhandled kademlia event: {unhandled:?}"),
         }
     }
 
@@ -484,7 +484,7 @@ impl EventLoop {
                     ))
                     .expect("channel not to be dropped");
             }
-            unhandled => eprintln!("unhandled request_response event {:?}", unhandled),
+            unhandled => tracing::error!("unhandled request_response event: {unhandled:?}"),
         };
     }
 
@@ -512,7 +512,7 @@ impl EventLoop {
                     };
                 }
                 hash_map::Entry::Occupied(_) => {
-                    eprintln!("already dialing the peer {:?}", peer.id);
+                    tracing::error!("already dialing peer: {:?}", peer.id);
                 }
             },
             Command::GetProviders { package_id, sender } => {

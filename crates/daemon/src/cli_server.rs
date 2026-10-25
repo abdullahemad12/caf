@@ -76,8 +76,8 @@ impl CliServer {
             None => return Err(tonic::Status::permission_denied("UdsConnectInfo missing")),
         };
 
-        println!(
-            "request Info {}",
+        tracing::info!(
+            "request info: {}",
             info.peer_cred.map(|it| it.gid() as i32).unwrap_or(-1)
         );
 
@@ -184,12 +184,18 @@ impl CommandProcessor {
                 CliCommand::GetActivePackageVersion { req, back_sender } => back_sender
                     .send(self.process_get_active_package_version(&req).await)
                     .unwrap_or_else(|_| {
-                        tracing::error!("error sending the response back for a get_active_package_version request of package: {}", req.package_name);
+                        tracing::error!(
+                            "failed to send response back for get_active_package_version request for package: {}",
+                            req.package_name
+                        );
                     }),
                 CliCommand::InstallPackage { req, back_sender } => back_sender
                     .send(self.process_install_package(&req).await)
                     .unwrap_or_else(|_| {
-                        tracing::error!("error sending the response back for a install_package request of package: {}", req.package_name);
+                        tracing::error!(
+                            "failed to send response back for install_package request for package: {}",
+                            req.package_name
+                        );
                     }),
             }
         }

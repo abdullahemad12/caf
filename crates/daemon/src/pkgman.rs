@@ -157,10 +157,9 @@ impl ReadOnlyPackageManager {
                     Ok(pkg) => pkg,
                     Err(err) => {
                         // TODO: maybe this needs to be reported better than this
-                        eprintln!(
-                            "unable to read subdirectory of {}: {}",
-                            packages_dir.to_string_lossy(),
-                            err
+                        tracing::error!(
+                            "failed to read subdirectory of {}: {err}",
+                            packages_dir.to_string_lossy()
                         );
                         return vec![];
                     }
@@ -170,10 +169,9 @@ impl ReadOnlyPackageManager {
                     Ok(pkg_dirs) => pkg_dirs,
                     Err(err) => {
                         // TODO: maybe this needs to be reported better than this
-                        eprintln!(
-                            "unable to read subdirectory of {}: {}",
-                            pkg.path().to_string_lossy(),
-                            err
+                        tracing::error!(
+                            "failed to read subdirectory of {}: {err}",
+                            pkg.path().to_string_lossy()
                         );
 
                         return vec![];
@@ -186,10 +184,9 @@ impl ReadOnlyPackageManager {
                             Ok(it) => it,
                             Err(err) => {
                                 // TODO: maybe this needs to be reported better than this
-                                eprintln!(
-                                    "unable to read subdirectory of {}: {}",
-                                    pkg.path().to_string_lossy(),
-                                    err
+                                tracing::error!(
+                                    "failed to read subdirectory of {}: {err}",
+                                    pkg.path().to_string_lossy()
                                 );
                                 return None;
                             }
@@ -203,7 +200,7 @@ impl ReadOnlyPackageManager {
                                     .to_str()
                                     .or_else(|| {
                                         tracing::error!(
-                                            "package name is not a valid unicode: {}",
+                                            "package name is not valid UTF-8: {}",
                                             pkg.file_name().to_string_lossy()
                                         );
                                         None
@@ -214,8 +211,8 @@ impl ReadOnlyPackageManager {
                                     .to_str()
                                     .or_else(|| {
                                         tracing::error!(
-                                            "version name is not a valid unicode: {}",
-                                            pkg.file_name().to_string_lossy()
+                                            "version name is not valid UTF-8: {}",
+                                            version.file_name().to_string_lossy()
                                         );
                                         None
                                     })?

@@ -37,7 +37,7 @@ async fn main() -> ExitCode {
     let cli_client = match protocol::setup_client().await {
         Ok(client) => client,
         Err(err) => {
-            eprintln!("{}", err);
+            tracing::error!("{err}");
             return ExitCode::FAILURE;
         }
     };
@@ -49,7 +49,7 @@ async fn main() -> ExitCode {
     };
 
     if let Err(err) = result {
-        tracing::error!("{}", err);
+        tracing::error!("{err}");
         return ExitCode::FAILURE;
     };
 

@@ -25,8 +25,7 @@ fn cleanup_old_logs(logs_directory: PathBuf) -> Result<(), CafError> {
             Ok(entry) => entry,
             Err(err) => {
                 eprintln!(
-                    "failed to open the logs directory for the cleanup: {:#?}",
-                    err
+                    "failed to read log directory entry during cleanup: {err:#?}"
                 );
                 return;
             }
@@ -40,8 +39,7 @@ fn cleanup_old_logs(logs_directory: PathBuf) -> Result<(), CafError> {
             Ok(metadata) => metadata.modified(),
             Err(err) => {
                 eprintln!(
-                    "unable to get the metadata for one of the logs files: {:#?}",
-                    err
+                    "failed to get metadata for log file: {err:#?}"
                 );
                 return;
             }
@@ -51,14 +49,13 @@ fn cleanup_old_logs(logs_directory: PathBuf) -> Result<(), CafError> {
             Ok(modified) => {
                 if modified < retension_threshold {
                     let _ = fs::remove_file(entry.path()).inspect_err(|err| {
-                        eprintln!("unable to cleanup an old log file: {:#?}", err);
+                        eprintln!("failed to clean up old log file: {err:#?}");
                     });
                 }
             }
             Err(err) => {
                 eprintln!(
-                    "unable to read the modified date for one of the logs files: {:#?}",
-                    err
+                    "failed to read modified date for log file: {err:#?}"
                 );
             }
         }
@@ -81,9 +78,9 @@ pub fn setup_tracing(data_directory: impl Into<PathBuf>) -> [WorkerGuard; 2] {
 
     let _ = fs::create_dir_all(logs_directory.clone())
         .wrap_err("unable to create the logs directory")
-        .inspect_err(|err| eprintln!("{:?}", err));
+        .inspect_err(|err| eprintln!("{err:?}"));
 
-    let _ = cleanup_old_logs(logs_directory.clone()).inspect_err(|err| eprintln!("{:?}", err));
+    let _ = cleanup_old_logs(logs_directory.clone()).inspect_err(|err| eprintln!("{err:?}"));
 
     let (file_writer, _file_guard) =
         create_file_appender(logs_directory.clone(), BASE_LOG_FILE_NAME.to_string());

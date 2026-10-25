@@ -247,8 +247,8 @@ pub trait LoggedUnwrap<T> {
 impl<T> LoggedUnwrap<T> for Result<T, CafError> {
     fn logged_unwrap(self) -> T {
         self.unwrap_or_else(|it| {
-            tracing::error!("{}", it);
-            tracing::debug!("{:?}", it);
+            tracing::error!("{it}");
+            tracing::debug!("{it:?}");
             std::process::exit(1)
         })
     }
