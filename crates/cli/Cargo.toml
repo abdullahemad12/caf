@@ -9,6 +9,7 @@ observability = { path = "../observability" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
 clap = { version = "4", features = ["derive"] }
 tonic = "0.14"
-
+directories = "6.0"
+tracing = "0.1"
 
 [dev-dependencies]

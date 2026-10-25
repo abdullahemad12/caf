@@ -19,7 +19,7 @@ use libp2p::{
 use std::time::Duration;
 use tokio::spawn;
 
-use crate::pkgman;
+use crate::pkgman::{self, PackageId};
 
 use observability::error::{CafError, CafErrorCode, WrapError, WrapErrorInResult};
 
@@ -27,7 +27,7 @@ use observability::error::{CafError, CafErrorCode, WrapError, WrapErrorInResult}
 pub enum Event {
     InboundRequest {
         request: pkgman::PackageId,
-        channel: ResponseChannel<pkgman::CompressedPackageContent>,
+        channel: ResponseChannel<pkgman::TarballCompressedPackageContent>,
     },
 }
 
@@ -58,20 +58,20 @@ enum Command {
         sender: oneshot::Sender<Result<(), CafError>>,
     },
     GetProviders {
-        package_name: String,
+        package_id: PackageId,
         sender: oneshot::Sender<HashSet<PeerId>>,
     },
     RequestPackage {
         package_id: pkgman::PackageId,
         peer_id: PeerId,
-        sender: oneshot::Sender<Result<pkgman::CompressedPackageContent, CafError>>,
+        sender: oneshot::Sender<Result<pkgman::TarballCompressedPackageContent, CafError>>,
     },
     ResponsePackage {
-        package: pkgman::CompressedPackageContent,
-        channel: ResponseChannel<pkgman::CompressedPackageContent>,
+        package: pkgman::TarballCompressedPackageContent,
+        channel: ResponseChannel<pkgman::TarballCompressedPackageContent>,
     },
     StartProviding {
-        package_name: String,
+        package_id: PackageId,
         sender: oneshot::Sender<()>,
     },
     Bootstrap {
@@ -81,8 +81,10 @@ enum Command {
 
 #[derive(NetworkBehaviour)]
 struct Behaviour {
-    request_response:
-        request_response::cbor::Behaviour<pkgman::PackageId, pkgman::CompressedPackageContent>,
+    request_response: request_response::cbor::Behaviour<
+        pkgman::PackageId,
+        pkgman::TarballCompressedPackageContent,
+    >,
     kademlia: kad::Behaviour<kad::store::MemoryStore>,
     identify: identify::Behaviour,
 }
@@ -119,7 +121,7 @@ impl NetworkClient {
         &mut self,
         peer_id: PeerId,
         package_id: pkgman::PackageId,
-    ) -> Result<pkgman::CompressedPackageContent, CafError> {
+    ) -> Result<pkgman::TarballCompressedPackageContent, CafError> {
         let (sender, receiver) = oneshot::channel();
         self.sender
             .send(Command::RequestPackage {
@@ -155,14 +157,11 @@ impl NetworkClient {
         receiver.await.expect("sender not to be dropped")
     }
 
-    pub async fn start_providing(&mut self, package_name: String) {
+    pub async fn start_providing(&mut self, package_id: PackageId) {
         let (sender, receiver) = oneshot::channel();
 
         self.sender
-            .send(Command::StartProviding {
-                package_name,
-                sender,
-            })
+            .send(Command::StartProviding { package_id, sender })
             .await
             .expect("command receiver not to be dropped");
 
@@ -171,8 +170,8 @@ impl NetworkClient {
 
     pub async fn respond_package(
         &mut self,
-        package: pkgman::CompressedPackageContent,
-        channel: ResponseChannel<pkgman::CompressedPackageContent>,
+        package: pkgman::TarballCompressedPackageContent,
+        channel: ResponseChannel<pkgman::TarballCompressedPackageContent>,
     ) {
         self.sender
             .send(Command::ResponsePackage { package, channel })
@@ -180,14 +179,11 @@ impl NetworkClient {
             .expect("command receiver not to be dropped");
     }
 
-    pub async fn get_providers(&mut self, package_name: String) -> HashSet<PeerId> {
+    pub async fn get_providers(&mut self, package_id: PackageId) -> HashSet<PeerId> {
         let (sender, receiver) = oneshot::channel();
 
         self.sender
-            .send(Command::GetProviders {
-                package_name,
-                sender,
-            })
+            .send(Command::GetProviders { package_id, sender })
             .await
             .expect("command receiver not to be dropped");
 
@@ -296,7 +292,7 @@ struct EventLoop {
     pending_get_providers: HashMap<kad::QueryId, oneshot::Sender<HashSet<PeerId>>>,
     pending_request_package: HashMap<
         OutboundRequestId,
-        oneshot::Sender<Result<pkgman::CompressedPackageContent, CafError>>,
+        oneshot::Sender<Result<pkgman::TarballCompressedPackageContent, CafError>>,
     >,
 }
 
@@ -453,7 +449,7 @@ impl EventLoop {
 
     async fn process_request_response_event(
         &mut self,
-        event: request_response::Event<pkgman::PackageId, pkgman::CompressedPackageContent>,
+        event: request_response::Event<pkgman::PackageId, pkgman::TarballCompressedPackageContent>,
     ) {
         match event {
             request_response::Event::Message { message, .. } => match message {
@@ -519,15 +515,12 @@ impl EventLoop {
                     eprintln!("already dialing the peer {:?}", peer.id);
                 }
             },
-            Command::GetProviders {
-                package_name,
-                sender,
-            } => {
+            Command::GetProviders { package_id, sender } => {
                 let query_id = self
                     .swarm
                     .behaviour_mut()
                     .kademlia
-                    .get_providers(package_name.into_bytes().into());
+                    .get_providers(package_id.into());
 
                 self.pending_get_providers.insert(query_id, sender);
             }
@@ -551,15 +544,12 @@ impl EventLoop {
                     .send_response(channel, package)
                     .expect("connection to pper to be still open");
             }
-            Command::StartProviding {
-                package_name,
-                sender,
-            } => {
+            Command::StartProviding { package_id, sender } => {
                 let query_id = self
                     .swarm
                     .behaviour_mut()
                     .kademlia
-                    .start_providing(package_name.into_bytes().into())
+                    .start_providing(package_id.into())
                     .expect("no store error");
 
                 self.pending_start_providing.insert(query_id, sender);

@@ -1,3 +1,4 @@
+use libp2p::kad::RecordKey;
 use observability::error::{CafError, CafErrorCode, WrapErrorInResult};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -9,10 +10,30 @@ pub struct PackageMetadata {
     active_version: String,
 }
 
+// TODO(AZ): add information about the OS and the CPU architecture
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PackageId {
     pub name: String,
     pub version: String,
+}
+
+impl PackageId {
+    pub fn new(name: String, version: String) -> Self {
+        PackageId { name, version }
+    }
+}
+
+impl From<PackageId> for Vec<u8> {
+    fn from(value: PackageId) -> Self {
+        value.to_string().into_bytes()
+    }
+}
+
+impl From<PackageId> for RecordKey {
+    fn from(value: PackageId) -> Self {
+        let b: Vec<u8> = value.into();
+        RecordKey::new(&b)
+    }
 }
 
 impl std::fmt::Display for PackageId {
@@ -21,14 +42,20 @@ impl std::fmt::Display for PackageId {
     }
 }
 
-// Contents of the packages are compressed into a single file (e.g. zip, tar.gz, etc..)
+// Contents of the packages are compressed into a single file tar.xz file
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct CompressedPackageContent(pub Vec<u8>);
+pub(crate) struct TarballCompressedPackageContent(pub Vec<u8>);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Package {
     pub id: PackageId,
-    pub content: CompressedPackageContent,
+    pub content: TarballCompressedPackageContent,
+}
+
+impl Package {
+    pub fn new(id: PackageId, content: TarballCompressedPackageContent) -> Self {
+        Package { id, content }
+    }
 }
 
 impl std::fmt::Display for Package {
@@ -79,10 +106,10 @@ impl ReadOnlyPackageManager {
         let content =
             fs::read(pkg_content_path).wrap_err("unable to retrieve the package from the db")?;
 
-        Ok(Package {
-            id: request.clone(),
-            content: CompressedPackageContent(content),
-        })
+        Ok(Package::new(
+            request.clone(),
+            TarballCompressedPackageContent(content),
+        ))
     }
 
     pub fn retrieve_active_package_version(
@@ -171,30 +198,29 @@ impl ReadOnlyPackageManager {
                         if !version.path().is_dir() {
                             None
                         } else {
-                            Some(PackageId {
-                                name: pkg
-                                    .file_name()
+                            Some(PackageId::new(
+                                pkg.file_name()
                                     .to_str()
                                     .or_else(|| {
-                                        eprintln!(
+                                        tracing::error!(
                                             "package name is not a valid unicode: {}",
                                             pkg.file_name().to_string_lossy()
                                         );
                                         None
                                     })?
                                     .to_string(),
-                                version: version
+                                version
                                     .file_name()
                                     .to_str()
                                     .or_else(|| {
-                                        eprintln!(
+                                        tracing::error!(
                                             "version name is not a valid unicode: {}",
                                             pkg.file_name().to_string_lossy()
                                         );
                                         None
                                     })?
                                     .to_string(),
-                            })
+                            ))
                         }
                     })
                     .collect()
@@ -208,7 +234,7 @@ pub struct PackageManager {
 
 // Design:
 // all packages are stored as
-//  /root_dir/pkgs/{package_name}/{package_version}/content.zip
+//  /root_dir/pkgs/{package_name}/{package_version}/content.tar.xz
 // each package has a metadata file stored at
 //  /root_dir/pkgs/{package_name}/metadata.json
 impl PackageManager {
@@ -285,7 +311,7 @@ mod tests {
                 name: "widget".into(),
                 version: "1.0.0".into(),
             },
-            content: CompressedPackageContent(vec![1, 2, 3, 4]),
+            content: TarballCompressedPackageContent(vec![1, 2, 3, 4]),
         }
     }
 
@@ -397,7 +423,7 @@ mod tests {
             manager
                 .install_package(Package {
                     id: pkg_id.clone(),
-                    content: CompressedPackageContent(vec![0]),
+                    content: TarballCompressedPackageContent(vec![0]),
                 })
                 .unwrap();
         }

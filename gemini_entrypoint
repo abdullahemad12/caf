@@ -1,0 +1,7 @@
+#!/usr/bin/env sh
+
+# Check for updates or force-update npm packages on container start
+echo "Checking for updates..."
+npm update -g @google/gemini-cli
+
+exec "$@"

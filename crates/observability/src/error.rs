@@ -5,6 +5,8 @@ use tonic::{
     Code, Status,
     metadata::{Ascii, MetadataKey, MetadataMap, MetadataValue},
 };
+// TODO: Add a utility to print an error, print a debug statement with debug formatting (which
+// should endup to the debug log file) and exit the program with an error
 
 pub const CAF_ERROR_CODE_HEADER: &str = "caf-error-code";
 
@@ -15,6 +17,7 @@ pub enum CafErrorCode {
     IoOperationCanceled,
     OutOfDiskStorage,
     PackageNotFound,
+    PackageVersionHasNoProviders,
     FileNotFound,
     PackageNotInstalled,
     FileAlreadyExists,
@@ -30,7 +33,9 @@ impl CafErrorCode {
     pub fn to_status_error_code(&self) -> Code {
         match self {
             Self::Internal => Code::Internal,
-            Self::PackageNotFound | Self::FileNotFound => Code::NotFound,
+            Self::PackageNotFound | Self::FileNotFound | Self::PackageVersionHasNoProviders => {
+                Code::NotFound
+            }
             Self::PackageNotInstalled => Code::FailedPrecondition,
             Self::FileAlreadyExists | Self::AnotherInstanceRunning => Code::AlreadyExists,
             Self::OsPermissionDenied | Self::CliPermissionDenied => Code::PermissionDenied,
@@ -70,7 +75,6 @@ impl CafErrorCode {
     }
 }
 
-#[derive(Debug)]
 pub struct CafError {
     message: String,
     source: Option<Box<dyn Error + Send + Sync + 'static>>,
@@ -139,6 +143,9 @@ impl fmt::Display for CafError {
             }
             CafErrorCode::PackageNotInstalled => "the package is not installed".to_string(),
             CafErrorCode::PackageNotFound => "the package is not found".to_string(),
+            CafErrorCode::PackageVersionHasNoProviders => {
+                "the package or its specific version has no providers".to_string()
+            }
             CafErrorCode::FileAlreadyExists => "the file already exists".to_string(),
             CafErrorCode::IoOperationCanceled => "the operation was canceled".to_string(),
             CafErrorCode::InvalidConfig => "invalid Caf configuration file".to_string(),
@@ -148,6 +155,15 @@ impl fmt::Display for CafError {
         };
 
         write!(f, "{}: {}", self.message, source_message)
+    }
+}
+
+impl fmt::Debug for CafError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.source.as_ref() {
+            Some(source) => write!(f, "{}: {:?}", self.message, source),
+            None => write!(f, "{}", self.message),
+        }
     }
 }
 
@@ -221,5 +237,19 @@ pub trait MapErrToStatus<T> {
 impl<T> MapErrToStatus<T> for Result<T, CafError> {
     fn map_err_to_status(self) -> Result<T, Status> {
         self.map_err(|it| it.to_status_error())
+    }
+}
+
+pub trait LoggedUnwrap<T> {
+    fn logged_unwrap(self) -> T;
+}
+
+impl<T> LoggedUnwrap<T> for Result<T, CafError> {
+    fn logged_unwrap(self) -> T {
+        self.unwrap_or_else(|it| {
+            tracing::error!("{}", it);
+            tracing::debug!("{:?}", it);
+            std::process::exit(1)
+        })
     }
 }

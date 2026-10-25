@@ -6,6 +6,7 @@ use std::{fs, path::PathBuf};
 use crate::{
     cli_server::CliServer,
     network::Peer,
+    pkgman::{Package, PackageId, TarballCompressedPackageContent},
     provider::{bootstrap, start_pkg_provider},
 };
 
@@ -56,6 +57,16 @@ async fn main() -> Result<(), CafError> {
     }
 
     let pkg_man = pkgman::PackageManager::new(get_root_dir_path(opt.home_dir.clone())?)?;
+
+    pkg_man
+        .install_package(Package {
+            id: PackageId {
+                name: "test".to_string(),
+                version: "7.0".to_string(),
+            },
+            content: TarballCompressedPackageContent("test pkg".as_bytes().to_vec()),
+        })
+        .unwrap();
 
     let cli_server = CliServer::start(pkg_man, ntwrk_client.clone());
 

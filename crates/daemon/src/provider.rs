@@ -34,12 +34,9 @@ async fn register_provided_packages(
     pkgman: &ReadOnlyPackageManager,
     ntwrk_client: &mut NetworkClient,
 ) -> Result<(), CafError> {
-    let futures = pkgman.all_package_ids_iter()?.map(async |package_id| {
-        ntwrk_client
-            .clone()
-            .start_providing(package_id.to_string())
-            .await
-    });
+    let futures = pkgman
+        .all_package_ids_iter()?
+        .map(async |package_id| ntwrk_client.clone().start_providing(package_id).await);
 
     future::join_all(futures).await;
 

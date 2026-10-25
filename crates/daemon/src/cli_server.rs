@@ -1,17 +1,22 @@
 use futures::{
-    SinkExt, StreamExt,
+    FutureExt, SinkExt, StreamExt,
     channel::{mpsc, oneshot},
+    future,
 };
 
 use protocol::protocol::{
-    GetActivePackageVersionRequest, GetActivePackageVersionResponse, cli_service_server::CliService,
+    GetActivePackageVersionRequest, GetActivePackageVersionResponse, InstallPackageRequest,
+    InstallPackageResponse, cli_service_server::CliService,
 };
 use tokio::spawn;
 use tonic::{Request, Response, Status, transport::server::UdsConnectInfo};
 
-use crate::{network::NetworkClient, pkgman::PackageManager};
+use crate::{
+    network::NetworkClient,
+    pkgman::{Package, PackageId, PackageManager},
+};
 
-use observability::error::{CafError, MapErrToStatus, WrapErrorInResult};
+use observability::error::{CafError, CafErrorCode, MapErrToStatus, WrapErrorInResult};
 
 pub struct CliServer {
     _cmd_sender: mpsc::Sender<CliCommand>,
@@ -19,6 +24,20 @@ pub struct CliServer {
 
 #[tonic::async_trait]
 impl CliService for CliServer {
+    async fn install_package(
+        &self,
+        req: Request<InstallPackageRequest>,
+    ) -> Result<Response<InstallPackageResponse>, Status> {
+        let (sender, receiver) = oneshot::channel();
+
+        let cmd = CliCommand::InstallPackage {
+            req: req.into_inner(),
+            back_sender: sender,
+        };
+
+        self.execute_command(cmd, receiver).await
+    }
+
     async fn get_active_package_version(
         &self,
         req: Request<GetActivePackageVersionRequest>,
@@ -30,14 +49,7 @@ impl CliService for CliServer {
             back_sender: sender,
         };
 
-        if let Err(e) = self.enqueue_command(cmd).await {
-            return Err(tonic::Status::internal(e.to_string()));
-        }
-
-        receiver
-            .await
-            .wrap_err("sender not to be dropped")
-            .map_err_to_status()?
+        self.execute_command(cmd, receiver).await
     }
 }
 
@@ -107,12 +119,22 @@ impl CliServer {
         Ok(())
     }
 
-    async fn enqueue_command(&self, cmd: CliCommand) -> Result<(), CafError> {
+    async fn execute_command<T>(
+        &self,
+        cmd: CliCommand,
+        receiver: oneshot::Receiver<Result<Response<T>, Status>>,
+    ) -> Result<Response<T>, Status> {
         self._cmd_sender
             .clone()
             .send(cmd)
             .await
             .wrap_err("enqueue command")
+            .map_err_to_status()?;
+
+        receiver
+            .await
+            .wrap_err("sender was dropped")
+            .map_err_to_status()?
     }
 }
 
@@ -120,6 +142,10 @@ enum CliCommand {
     GetActivePackageVersion {
         req: GetActivePackageVersionRequest,
         back_sender: oneshot::Sender<Result<Response<GetActivePackageVersionResponse>, Status>>,
+    },
+    InstallPackage {
+        req: InstallPackageRequest,
+        back_sender: oneshot::Sender<Result<Response<InstallPackageResponse>, Status>>,
     },
 }
 
@@ -158,7 +184,12 @@ impl CommandProcessor {
                 CliCommand::GetActivePackageVersion { req, back_sender } => back_sender
                     .send(self.process_get_active_package_version(&req).await)
                     .unwrap_or_else(|_| {
-                        eprintln!("error sending the response back for a get_active_package_version request of package: {}", req.package_name);
+                        tracing::error!("error sending the response back for a get_active_package_version request of package: {}", req.package_name);
+                    }),
+                CliCommand::InstallPackage { req, back_sender } => back_sender
+                    .send(self.process_install_package(&req).await)
+                    .unwrap_or_else(|_| {
+                        tracing::error!("error sending the response back for a install_package request of package: {}", req.package_name);
                     }),
             }
         }
@@ -178,52 +209,46 @@ impl CommandProcessor {
             })
             .map_err_to_status()
     }
+
+    // TODO: currently this will block the rpc request until this is done. Perhaps it respond early
+    // and let the cli poll for the progress of this request. This will allow the daemon to report
+    // intermediate progress to the cli like how much percentage is already downloaded and what the
+    // daemon is doing
+    async fn process_install_package(
+        &mut self,
+        req: &InstallPackageRequest,
+    ) -> Result<Response<InstallPackageResponse>, Status> {
+        let package_id = PackageId::new(req.package_name.clone(), req.package_version.clone());
+
+        let providers = self._ntwrk_client.get_providers(package_id.clone()).await;
+
+        if providers.is_empty() {
+            return Err(CafError::new(
+                CafErrorCode::PackageVersionHasNoProviders,
+                "no providers for the given package version",
+            ))
+            .map_err_to_status();
+        }
+
+        let requests: Vec<_> = providers
+            .into_iter()
+            .map(|it| {
+                let mut network_client = self._ntwrk_client.clone();
+                let package_id = package_id.clone();
+                async move { network_client.request_package(it, package_id).await }.boxed()
+            })
+            .collect();
+
+        // we only need one of them to respond
+        let package_content = future::select_ok(requests).await.map_err_to_status()?.0;
+
+        // TODO: Check for package integrity
+        let package = Package::new(package_id.clone(), package_content);
+
+        self._pkgman.install_package(package).map_err_to_status()?;
+
+        self._ntwrk_client.clone().start_providing(package_id).await;
+
+        Ok(Response::new(InstallPackageResponse {}))
+    }
 }
-
-// TODO: this should listen on a unix socket for cli commands
-/*pub async fn start_pkg_consumer(
-    pkgman: &PackageManager,
-    ntwrk_client: &mut NetworkClient,
-) -> Result<(), CafError> {
-    let name = "".to_string();
-    let version: String = "7.0".into(); // TODO add option to get it from cli args
-                                        // TODO If the version is not provided by the user default to getting the latest
-                                        // version.. Make a request with an optional parameter (version) that would get the
-                                        // hash of the package based on the version if it is provided and defaults to the
-                                        // latest if not
-
-    let providers = ntwrk_client.get_providers(name.clone()).await;
-
-    // TODO: This shouldn't return with an error. Instead it should respond to the cli with an
-    // error
-    if providers.is_empty() {
-        return Err(CafError::new(format!(
-            "could not find providers for file {}",
-            name
-        )));
-    };
-
-    let package_id = PackageId { name, version };
-    let requests: Vec<_> = providers
-        .into_iter()
-        .map(|it| {
-            let mut network_client = ntwrk_client.clone();
-            let package_id = package_id.clone();
-            async move { network_client.request_package(it, package_id).await }.boxed()
-        })
-        .collect();
-
-    // we only need one of them to respond
-    let package_content = futures::future::select_ok(requests)
-        .await
-        .wrap_err("downloading the package from the providers failed")?
-        .0;
-
-    // TODO: verify the package using a hash
-    pkgman.install_package(Package {
-        id: package_id,
-        content: package_content,
-    })?;
-
-    return Ok(());
-}*/

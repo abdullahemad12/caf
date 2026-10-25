@@ -9,6 +9,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     time \
     && rm -rf /var/lib/apt/lists/*
 Run apt-get install
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    protobuf-compiler \
+    && rm -rf /var/lib/apt/lists/*
+
 # Install Gemini CLI globally
 RUN npm install -g @google/gemini-cli
 
@@ -25,5 +30,8 @@ ENV PATH="/root/.cargo/bin:$PATH"
 # Set default directory
 WORKDIR /workspace
 
-# IMPORTANT: The installed binary name is "gemini", not "gemini-cli"
-ENTRYPOINT ["gemini"]
+COPY gemini_entrypoint /gemini_entrypoint
+RUN chmod +x /gemini_entrypoint
+
+ENTRYPOINT ["/gemini_entrypoint"]
+CMD ["gemini"]

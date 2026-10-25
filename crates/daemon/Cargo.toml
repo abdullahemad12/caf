@@ -20,6 +20,7 @@ protocol = { path = "../protocol" }
 observability = { path = "../observability" }
 tonic = "0.14"
 strum = { version = "0.28", features = ["derive"] }
+tracing = "0.1"
 
 [dev-dependencies]
 tempfile = "3"

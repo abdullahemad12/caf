@@ -4,6 +4,7 @@ package cli;
 
 service CliService {
     rpc GetActivePackageVersion (GetActivePackageVersionRequest) returns (GetActivePackageVersionResponse);
+    rpc InstallPackage (InstallPackageRequest) returns (InstallPackageResponse);
 }
 
 message GetActivePackageVersionRequest {
@@ -13,4 +14,12 @@ message GetActivePackageVersionRequest {
 message GetActivePackageVersionResponse {
     string package_name = 1;
     string version = 2;
+}
+
+message InstallPackageRequest {
+  string package_name = 1;
+  string package_version = 2;
+}
+
+message InstallPackageResponse {
 }

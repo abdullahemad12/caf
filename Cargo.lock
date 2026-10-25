@@ -357,10 +357,12 @@ name = "caf-cli"
 version = "0.0.0"
 dependencies = [
  "clap",
+ "directories",
  "observability",
  "protocol",
  "tokio",
  "tonic",
+ "tracing",
 ]
 
 [[package]]
@@ -379,6 +381,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tonic",
+ "tracing",
 ]
 
 [[package]]
