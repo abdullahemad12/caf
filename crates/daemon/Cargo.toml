@@ -21,6 +21,7 @@ observability = { path = "../observability" }
 tonic = "0.14"
 strum = { version = "0.28", features = ["derive"] }
 tracing = "0.1"
+semver = { version = "1.0.28", features = ["serde"] }
 
 [dev-dependencies]
 tempfile = "3"

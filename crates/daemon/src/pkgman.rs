@@ -1,5 +1,6 @@
 use libp2p::kad::RecordKey;
 use observability::error::{CafError, CafErrorCode, WrapErrorInResult};
+use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -7,19 +8,22 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct PackageMetadata {
     name: String,
-    active_version: String,
+    active_version: Version,
 }
 
 // TODO(AZ): add information about the OS and the CPU architecture
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PackageId {
     pub name: String,
-    pub version: String,
+    pub version: Version,
 }
 
 impl PackageId {
-    pub fn new(name: String, version: String) -> Self {
-        PackageId { name, version }
+    pub fn new(name: String, raw_version: String) -> Result<Self, CafError> {
+        let version = Version::parse(raw_version.as_str())
+            .wrap_err_with_code(CafErrorCode::InvalidVersionFormat, "invalid version format")?;
+
+        Ok(PackageId { name, version })
     }
 }
 
@@ -100,7 +104,7 @@ impl ReadOnlyPackageManager {
     pub fn retrieve_package(&self, request: &PackageId) -> Result<Package, CafError> {
         let pkg_content_path = self
             .get_package_path(&request.name)
-            .join(&request.version)
+            .join(request.version.to_string())
             .join(ReadOnlyPackageManager::CONTENT_FILE_NAME);
 
         let content =
@@ -195,29 +199,38 @@ impl ReadOnlyPackageManager {
                         if !version.path().is_dir() {
                             None
                         } else {
-                            Some(PackageId::new(
-                                pkg.file_name()
-                                    .to_str()
-                                    .or_else(|| {
-                                        tracing::error!(
-                                            "package name is not valid UTF-8: {}",
-                                            pkg.file_name().to_string_lossy()
-                                        );
-                                        None
-                                    })?
-                                    .to_string(),
-                                version
-                                    .file_name()
-                                    .to_str()
-                                    .or_else(|| {
-                                        tracing::error!(
-                                            "version name is not valid UTF-8: {}",
-                                            version.file_name().to_string_lossy()
-                                        );
-                                        None
-                                    })?
-                                    .to_string(),
-                            ))
+                            let pkg_name = pkg
+                                .file_name()
+                                .to_str()
+                                .or_else(|| {
+                                    tracing::error!(
+                                        "package name is not valid UTF-8: {}",
+                                        pkg.file_name().to_string_lossy()
+                                    );
+                                    None
+                                })?
+                                .to_string();
+
+                            let pkg_version = version
+                                .file_name()
+                                .to_str()
+                                .or_else(|| {
+                                    tracing::error!(
+                                        "version name is not valid UTF-8: {}",
+                                        version.file_name().to_string_lossy()
+                                    );
+                                    None
+                                })?
+                                .to_string();
+
+                            PackageId::new(pkg_name, pkg_version)
+                                .inspect_err(|err| {
+                                    tracing::error!(
+                                        "failed to create package id for {}: {err}",
+                                        pkg.file_name().to_string_lossy()
+                                    )
+                                })
+                                .ok()
                         }
                     })
                     .collect()
@@ -242,7 +255,7 @@ impl PackageManager {
 
     pub fn install_package(&self, package: Package) -> Result<(), CafError> {
         let pkg_path = self.read_only_pkgman.get_package_path(&package.id.name);
-        let install_path = pkg_path.join(package.id.version.clone());
+        let install_path = pkg_path.join(package.id.version.to_string());
 
         let metadata_json = serde_json::to_string_pretty(&PackageMetadata {
             name: package.id.name.clone(),

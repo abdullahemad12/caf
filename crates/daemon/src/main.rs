@@ -60,10 +60,7 @@ async fn main() -> Result<(), CafError> {
 
     pkg_man
         .install_package(Package {
-            id: PackageId {
-                name: "test".to_string(),
-                version: "7.0".to_string(),
-            },
+            id: PackageId::new("test".to_string(), "7.0.0".to_string()).unwrap(),
             content: TarballCompressedPackageContent("test pkg".as_bytes().to_vec()),
         })
         .unwrap();

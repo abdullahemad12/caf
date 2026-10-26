@@ -70,3 +70,10 @@ async fn get_active_package_version(
 
     Ok(())
 }
+
+/*async fn install_package(
+    mut cli_client: CliServiceClient<Channel>,
+    target_package: String,
+) -> Result<(), CafError> {
+
+}*/

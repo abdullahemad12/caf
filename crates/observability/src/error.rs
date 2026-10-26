@@ -26,6 +26,8 @@ pub enum CafErrorCode {
     CliPermissionDenied,
     InvalidConfig,
     BrokenDatabaseState,
+    InvalidTargetPackageName,
+    InvalidVersionFormat,
     Todo,
 }
 
@@ -42,7 +44,9 @@ impl CafErrorCode {
             Self::IoOperationCanceled => Code::Cancelled,
             Self::OutOfDiskStorage => Code::ResourceExhausted,
             Self::NetworkFailure => Code::Unavailable,
-            Self::InvalidConfig => Code::InvalidArgument,
+            Self::InvalidConfig | Self::InvalidTargetPackageName | Self::InvalidVersionFormat => {
+                Code::InvalidArgument
+            }
             Self::BrokenDatabaseState => Code::FailedPrecondition,
             Self::Todo => Code::Unimplemented,
         }
@@ -149,6 +153,14 @@ impl fmt::Display for CafError {
             CafErrorCode::FileAlreadyExists => "the file already exists".to_string(),
             CafErrorCode::IoOperationCanceled => "the operation was canceled".to_string(),
             CafErrorCode::InvalidConfig => "invalid Caf configuration file".to_string(),
+            CafErrorCode::InvalidTargetPackageName => {
+                "invalid target package name. expected target package format: <name>[@<version>]"
+                    .to_string()
+            }
+            CafErrorCode::InvalidVersionFormat => {
+                "the given version does not conform to the standard semantic versioning specs: https://semver.org/"
+                    .to_string()
+            }
             CafErrorCode::NetworkFailure => "network failure".to_string(),
             CafErrorCode::FileNotFound => "the file is not found".to_string(),
             CafErrorCode::Todo => "this functionality is not yet implemented".to_string(),

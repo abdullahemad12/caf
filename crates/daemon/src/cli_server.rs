@@ -210,7 +210,7 @@ impl CommandProcessor {
             .map(|package_id| {
                 Response::new(GetActivePackageVersionResponse {
                     package_name: package_id.name,
-                    version: package_id.version,
+                    version: package_id.version.to_string(),
                 })
             })
             .map_err_to_status()
@@ -224,7 +224,8 @@ impl CommandProcessor {
         &mut self,
         req: &InstallPackageRequest,
     ) -> Result<Response<InstallPackageResponse>, Status> {
-        let package_id = PackageId::new(req.package_name.clone(), req.package_version.clone());
+        let package_id = PackageId::new(req.package_name.clone(), req.package_version.clone())
+            .map_err_to_status()?;
 
         let providers = self._ntwrk_client.get_providers(package_id.clone()).await;
 
