@@ -4,9 +4,11 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use tracing::level_filters::LevelFilter;
+use tracing::{Level, level_filters::LevelFilter};
 use tracing_appender::non_blocking::{NonBlocking, WorkerGuard};
-use tracing_subscriber::{Layer, Registry, layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_subscriber::{
+    Layer, Registry, filter::filter_fn, layer::SubscriberExt, util::SubscriberInitExt,
+};
 
 use crate::error::{CafError, WrapErrorInResult};
 
@@ -24,9 +26,7 @@ fn cleanup_old_logs(logs_directory: PathBuf) -> Result<(), CafError> {
         let entry = match entry {
             Ok(entry) => entry,
             Err(err) => {
-                eprintln!(
-                    "failed to read log directory entry during cleanup: {err:#?}"
-                );
+                eprintln!("failed to read log directory entry during cleanup: {err:#?}");
                 return;
             }
         };
@@ -38,9 +38,7 @@ fn cleanup_old_logs(logs_directory: PathBuf) -> Result<(), CafError> {
         let modified = match entry.metadata() {
             Ok(metadata) => metadata.modified(),
             Err(err) => {
-                eprintln!(
-                    "failed to get metadata for log file: {err:#?}"
-                );
+                eprintln!("failed to get metadata for log file: {err:#?}");
                 return;
             }
         };
@@ -54,9 +52,7 @@ fn cleanup_old_logs(logs_directory: PathBuf) -> Result<(), CafError> {
                 }
             }
             Err(err) => {
-                eprintln!(
-                    "failed to read modified date for log file: {err:#?}"
-                );
+                eprintln!("failed to read modified date for log file: {err:#?}");
             }
         }
     });
@@ -107,12 +103,24 @@ pub fn setup_tracing(data_directory: impl Into<PathBuf>) -> [WorkerGuard; 2] {
         .with_level(false)
         .without_time()
         .with_target(false)
-        .with_filter(LevelFilter::INFO);
+        .with_filter(filter_fn(|meta| {
+            [Level::WARN, Level::INFO].contains(meta.level())
+        }));
+
+    let stderr_layer = tracing_subscriber::fmt::layer()
+        .compact()
+        .with_level(false)
+        .with_ansi(true)
+        .without_time()
+        .with_target(false)
+        .with_writer(std::io::stderr)
+        .with_filter(LevelFilter::ERROR);
 
     Registry::default()
         .with(file_layer)
         .with(debug_file_layer)
         .with(stdout_layer)
+        .with(stderr_layer)
         .init();
 
     [_file_guard, _debug_file_guard]

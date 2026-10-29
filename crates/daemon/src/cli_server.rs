@@ -194,7 +194,7 @@ impl CommandProcessor {
                     .unwrap_or_else(|_| {
                         tracing::error!(
                             "failed to send response back for install_package request for package: {}",
-                            req.package_name
+                            req.user_package_id
                         );
                     }),
             }
@@ -224,8 +224,7 @@ impl CommandProcessor {
         &mut self,
         req: &InstallPackageRequest,
     ) -> Result<Response<InstallPackageResponse>, Status> {
-        let package_id = PackageId::new(req.package_name.clone(), req.package_version.clone())
-            .map_err_to_status()?;
+        let package_id: PackageId = req.user_package_id.clone().try_into().map_err_to_status()?;
 
         let providers = self._ntwrk_client.get_providers(package_id.clone()).await;
 

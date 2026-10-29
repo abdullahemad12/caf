@@ -442,7 +442,9 @@ impl EventLoop {
                     )),
                 ..
             } => {}
-            kad::Event::InboundRequest { request } => tracing::info!("inbound request: {request:?}"),
+            kad::Event::InboundRequest { request } => {
+                tracing::info!("inbound request: {request:?}")
+            }
             unhandled => tracing::error!("unhandled kademlia event: {unhandled:?}"),
         }
     }

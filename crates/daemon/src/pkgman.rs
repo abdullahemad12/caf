@@ -19,9 +19,11 @@ pub struct PackageId {
 }
 
 impl PackageId {
-    pub fn new(name: String, raw_version: String) -> Result<Self, CafError> {
-        let version = Version::parse(raw_version.as_str())
+    pub fn new(name: impl Into<String>, raw_version: impl Into<String>) -> Result<Self, CafError> {
+        let version = Version::parse(raw_version.into().as_str())
             .wrap_err_with_code(CafErrorCode::InvalidVersionFormat, "invalid version format")?;
+
+        let name: String = name.into();
 
         Ok(PackageId { name, version })
     }
@@ -37,6 +39,18 @@ impl From<PackageId> for RecordKey {
     fn from(value: PackageId) -> Self {
         let b: Vec<u8> = value.into();
         RecordKey::new(&b)
+    }
+}
+
+impl TryFrom<String> for PackageId {
+    type Error = CafError;
+    fn try_from(raw_user_pkg_id: String) -> Result<Self, Self::Error> {
+        let (pkg_name, pkg_version) = raw_user_pkg_id.split_once("@").ok_or(CafError::new(
+            CafErrorCode::InvalidUserPackageIdFormat,
+            "invalid package id",
+        ))?;
+
+        PackageId::new(pkg_name, pkg_version)
     }
 }
 
@@ -319,7 +333,7 @@ mod tests {
         Package {
             id: PackageId {
                 name: "widget".into(),
-                version: "1.0.0".into(),
+                version: Version::parse("1.0.0").unwrap(),
             },
             content: TarballCompressedPackageContent(vec![1, 2, 3, 4]),
         }
@@ -340,7 +354,7 @@ mod tests {
             .path()
             .join("pkgs")
             .join(&package.id.name)
-            .join(&package.id.version);
+            .join(&package.id.version.to_string());
 
         let content_path = install_path.join(ReadOnlyPackageManager::CONTENT_FILE_NAME);
 
@@ -417,15 +431,15 @@ mod tests {
         let pkgs = vec![
             PackageId {
                 name: "a".into(),
-                version: "1.0.0".into(),
+                version: Version::parse("1.0.0").unwrap(),
             },
             PackageId {
                 name: "a".into(),
-                version: "1.1.0".into(),
+                version: Version::parse("1.1.0").unwrap(),
             },
             PackageId {
                 name: "b".into(),
-                version: "0.1.0".into(),
+                version: Version::parse("0.1.0").unwrap(),
             },
         ];
 
@@ -476,6 +490,6 @@ mod tests {
         // then:
         assert_eq!(ids.len(), 1);
         assert_eq!(ids[0].name, "pkg_a");
-        assert_eq!(ids[0].version, "1.0.0");
+        assert_eq!(ids[0].version, Version::parse("1.0.0").unwrap());
     }
 }

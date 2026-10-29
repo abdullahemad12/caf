@@ -6,8 +6,24 @@ use observability::{
     error::{CafError, WrapErrorInResult},
     tracing::setup_tracing,
 };
-use protocol::protocol::{GetActivePackageVersionRequest, cli_service_client::CliServiceClient};
+use protocol::protocol::{
+    GetActivePackageVersionRequest, InstallPackageRequest, cli_service_client::CliServiceClient,
+};
 use tonic::transport::Channel;
+
+#[macro_export]
+macro_rules! caf_info {
+    ($($arg:tt)*) => {
+        tracing::event!(
+            target: module_path!(),
+            tracing::Level::INFO,
+            message = format_args!(
+                "☕{}",
+                format_args!($($arg)*)
+            )
+        );
+    };
+}
 
 const CRATE_NAME: &str = env!("CARGO_PKG_NAME");
 
@@ -22,6 +38,9 @@ struct Args {
 enum Commands {
     #[command(name = "active-version")]
     GetActivePackageVersion { package_name: String },
+
+    #[command(name = "install")]
+    InstallPackage { user_package_id: String },
 }
 
 #[tokio::main]
@@ -46,6 +65,9 @@ async fn main() -> ExitCode {
         Commands::GetActivePackageVersion { package_name } => {
             get_active_package_version(cli_client, package_name).await
         }
+        Commands::InstallPackage { user_package_id } => {
+            install_package(cli_client, user_package_id).await
+        }
     };
 
     if let Err(err) = result {
@@ -66,14 +88,23 @@ async fn get_active_package_version(
         .wrap_err("getting active package version failed")?
         .into_inner();
 
-    tracing::info!("{} {}", resp.package_name, resp.version);
+    caf_info!("{} {}", resp.package_name, resp.version);
 
     Ok(())
 }
 
-/*async fn install_package(
+async fn install_package(
     mut cli_client: CliServiceClient<Channel>,
-    target_package: String,
+    user_package_id: String,
 ) -> Result<(), CafError> {
+    cli_client
+        .install_package(InstallPackageRequest {
+            user_package_id: user_package_id.clone(),
+        })
+        .await
+        .wrap_err("installing the package failed")?;
 
-}*/
+    caf_info!("successfully installed {}", user_package_id.clone());
+
+    Ok(())
+}

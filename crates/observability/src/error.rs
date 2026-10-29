@@ -26,7 +26,7 @@ pub enum CafErrorCode {
     CliPermissionDenied,
     InvalidConfig,
     BrokenDatabaseState,
-    InvalidTargetPackageName,
+    InvalidUserPackageIdFormat,
     InvalidVersionFormat,
     Todo,
 }
@@ -44,7 +44,7 @@ impl CafErrorCode {
             Self::IoOperationCanceled => Code::Cancelled,
             Self::OutOfDiskStorage => Code::ResourceExhausted,
             Self::NetworkFailure => Code::Unavailable,
-            Self::InvalidConfig | Self::InvalidTargetPackageName | Self::InvalidVersionFormat => {
+            Self::InvalidConfig | Self::InvalidVersionFormat | Self::InvalidUserPackageIdFormat => {
                 Code::InvalidArgument
             }
             Self::BrokenDatabaseState => Code::FailedPrecondition,
@@ -153,7 +153,7 @@ impl fmt::Display for CafError {
             CafErrorCode::FileAlreadyExists => "the file already exists".to_string(),
             CafErrorCode::IoOperationCanceled => "the operation was canceled".to_string(),
             CafErrorCode::InvalidConfig => "invalid Caf configuration file".to_string(),
-            CafErrorCode::InvalidTargetPackageName => {
+            CafErrorCode::InvalidUserPackageIdFormat => {
                 "invalid target package name. expected target package format: <name>[@<version>]"
                     .to_string()
             }

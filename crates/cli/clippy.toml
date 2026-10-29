@@ -1,0 +1,7 @@
+disallowed-macros = [
+    { path = "std::println", reason = "Use `caf_info!` instead of `println!`" },
+    { path = "std::print", reason = "Use `caf_info!` instead of `print!`" },
+    { path = "std::eprintln", reason = "Use `caf_info!` instead of `eprintln!`" },
+    { path = "std::eprint", reason = "Use `caf_info!` instead of `eprint!`" },
+    { path = "tracing::info", reason = "Use `caf_info!` instead of direct `tracing::info!`" },
+]

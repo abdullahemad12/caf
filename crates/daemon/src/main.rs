@@ -1,12 +1,14 @@
 use clap::Parser;
 use libp2p::Multiaddr;
-use observability::error::{CafError, WrapErrorInResult};
+use observability::{
+    error::{CafError, WrapErrorInResult},
+    tracing::setup_tracing,
+};
 use std::{fs, path::PathBuf};
 
 use crate::{
     cli_server::CliServer,
     network::Peer,
-    pkgman::{Package, PackageId, TarballCompressedPackageContent},
     provider::{bootstrap, start_pkg_provider},
 };
 
@@ -40,15 +42,22 @@ struct Opt {
 async fn main() -> Result<(), CafError> {
     let opt = Opt::parse();
 
+    let root_dir_path = get_root_dir_path(opt.home_dir.clone())?;
+
+    let _tracing_gaurd = setup_tracing(root_dir_path.clone());
+
     // storing the lock in a variable ensures
     // that the file is not dropped until the
     // main function exists
-    let _caf_lock = lock::acquire_caf_lock().unwrap();
+    let _caf_lock = if !cfg!(debug_assertions) {
+        Some(lock::acquire_caf_lock().unwrap())
+    } else {
+        None
+    };
 
     let (mut ntwrk, ntwrk_client) = network::Network::init(network::NetworkConfig::new()).unwrap();
 
-    let read_pkgman =
-        pkgman::ReadOnlyPackageManager::new(get_root_dir_path(opt.home_dir.clone())?)?;
+    let read_pkgman = pkgman::ReadOnlyPackageManager::new(root_dir_path.clone())?;
 
     let mut provider_client = ntwrk_client.clone();
     let provider = start_pkg_provider(read_pkgman, &mut ntwrk, &mut provider_client);
@@ -56,14 +65,7 @@ async fn main() -> Result<(), CafError> {
         bootstrap(opt.bootstrap_nodes, &mut ntwrk_client.clone()).await?
     }
 
-    let pkg_man = pkgman::PackageManager::new(get_root_dir_path(opt.home_dir.clone())?)?;
-
-    pkg_man
-        .install_package(Package {
-            id: PackageId::new("test".to_string(), "7.0.0".to_string()).unwrap(),
-            content: TarballCompressedPackageContent("test pkg".as_bytes().to_vec()),
-        })
-        .unwrap();
+    let pkg_man = pkgman::PackageManager::new(root_dir_path.clone())?;
 
     let cli_server = CliServer::start(pkg_man, ntwrk_client.clone());
 
