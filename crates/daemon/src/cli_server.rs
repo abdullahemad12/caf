@@ -226,6 +226,24 @@ impl CommandProcessor {
     ) -> Result<Response<InstallPackageResponse>, Status> {
         let package_id: PackageId = req.user_package_id.clone().try_into().map_err_to_status()?;
 
+        // TODO: Allow the user to force reinstall the package
+        // The idea is basically to add a force-reinstall flag to the request
+        // and if initially it is passed with false (unless the user also provides a cli option to
+        // set it to true). If it is set to false, do the check and return the error. When this
+        // happens, display a confirmation message to the user and if they say yes, send the request
+        // again with this flag set to true
+        if self
+            ._pkgman
+            .pkg_exists_locally(&package_id)
+            .map_err_to_status()?
+        {
+            return Err(CafError::new(
+                CafErrorCode::PackageAlreadyInstalled,
+                "package is already installed",
+            ))
+            .map_err_to_status();
+        }
+
         let providers = self._ntwrk_client.get_providers(package_id.clone()).await;
 
         if providers.is_empty() {
@@ -236,14 +254,24 @@ impl CommandProcessor {
             .map_err_to_status();
         }
 
+        let local_peer_id = *self._ntwrk_client.local_peer_id();
         let requests: Vec<_> = providers
             .into_iter()
+            .filter(|&it| it != local_peer_id)
             .map(|it| {
                 let mut network_client = self._ntwrk_client.clone();
                 let package_id = package_id.clone();
                 async move { network_client.request_package(it, package_id).await }.boxed()
             })
             .collect();
+
+        if requests.is_empty() {
+            return Err(CafError::new(
+                CafErrorCode::PackageVersionHasNoProviders,
+                "no providers for the given package version",
+            ))
+            .map_err_to_status();
+        }
 
         // we only need one of them to respond
         let package_content = future::select_ok(requests).await.map_err_to_status()?.0;

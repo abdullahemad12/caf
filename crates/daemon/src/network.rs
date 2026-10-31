@@ -109,12 +109,13 @@ impl NetworkConfig {
 
 #[derive(Clone)]
 pub struct NetworkClient {
+    peer_id: PeerId,
     sender: mpsc::Sender<Command>,
 }
 
 impl NetworkClient {
-    fn new(sender: mpsc::Sender<Command>) -> Self {
-        NetworkClient { sender }
+    fn new(peer_id: PeerId, sender: mpsc::Sender<Command>) -> Self {
+        NetworkClient { peer_id, sender }
     }
 
     pub async fn request_package(
@@ -188,6 +189,10 @@ impl NetworkClient {
             .expect("command receiver not to be dropped");
 
         receiver.await.expect("sender not to be dropped")
+    }
+
+    pub fn local_peer_id(&self) -> &PeerId {
+        &self.peer_id
     }
 }
 
@@ -273,7 +278,7 @@ impl Network {
             Network {
                 stream: Box::pin(event_receiver),
             },
-            NetworkClient::new(command_sender),
+            NetworkClient::new(peer_id, command_sender),
         ))
     }
 

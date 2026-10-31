@@ -6,9 +6,33 @@ use std::fs;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-pub struct PackageMetadata {
+#[serde(rename_all = "camelCase")]
+pub struct InstallationMetadata {
     name: String,
     active_version: Version,
+    verified_downloaded_versions: Vec<Version>,
+}
+
+impl InstallationMetadata {
+    fn new(package_id: &PackageId) -> Self {
+        InstallationMetadata {
+            name: package_id.name.clone(),
+            active_version: package_id.version.clone(),
+            verified_downloaded_versions: vec![package_id.version.clone()],
+        }
+    }
+
+    fn with_new_version(&self, new_version: &Version) -> Self {
+        InstallationMetadata {
+            name: self.name.clone(),
+            active_version: new_version.clone(),
+            verified_downloaded_versions: {
+                let mut versions = self.verified_downloaded_versions.clone();
+                versions.push(new_version.clone());
+                versions
+            },
+        }
+    }
 }
 
 // TODO(AZ): add information about the OS and the CPU architecture
@@ -115,6 +139,33 @@ impl ReadOnlyPackageManager {
         Ok(pkgman)
     }
 
+    pub fn pkg_exists_locally(&self, package_id: &PackageId) -> Result<bool, CafError> {
+        let metadata = match self.read_installation_metadata(&package_id.name) {
+            Ok(metadata) => metadata,
+            Err(err) => {
+                if *err.code() == CafErrorCode::PackageNotFound {
+                    return Ok(false);
+                } else {
+                    return Err(err);
+                }
+            }
+        };
+
+        if metadata
+            .verified_downloaded_versions
+            .iter()
+            .all(|it| *it != package_id.version)
+        {
+            return Ok(false);
+        }
+
+        self.get_package_path(&package_id.name)
+            .join(package_id.version.to_string())
+            .join(ReadOnlyPackageManager::CONTENT_FILE_NAME)
+            .try_exists()
+            .wrap_err("checking for package existance failed")
+    }
+
     pub fn retrieve_package(&self, request: &PackageId) -> Result<Package, CafError> {
         let pkg_content_path = self
             .get_package_path(&request.name)
@@ -130,10 +181,10 @@ impl ReadOnlyPackageManager {
         ))
     }
 
-    pub fn retrieve_active_package_version(
+    fn read_installation_metadata(
         &self,
         package_name: &String,
-    ) -> Result<PackageId, CafError> {
+    ) -> Result<InstallationMetadata, CafError> {
         let metadata_file = fs::File::open(
             self.get_package_path(package_name)
                 .join(ReadOnlyPackageManager::METADATA_FILE_NAME),
@@ -148,13 +199,20 @@ impl ReadOnlyPackageManager {
 
         let reader = std::io::BufReader::new(metadata_file);
 
-        let metadata: PackageMetadata = serde_json::from_reader(reader).wrap_err_with_code(
+        serde_json::from_reader(reader).wrap_err_with_code(
             CafErrorCode::BrokenDatabaseState,
             format!(
                 "unable to serialize the package metadata into JSON for package {}",
                 package_name,
             ),
-        )?;
+        )
+    }
+
+    pub fn retrieve_active_package_version(
+        &self,
+        package_name: &String,
+    ) -> Result<PackageId, CafError> {
+        let metadata = self.read_installation_metadata(package_name)?;
 
         Ok(PackageId {
             name: metadata.name,
@@ -267,21 +325,36 @@ impl PackageManager {
         Ok(PackageManager { read_only_pkgman })
     }
 
+    pub fn pkg_exists_locally(&self, package_id: &PackageId) -> Result<bool, CafError> {
+        self.read_only_pkgman.pkg_exists_locally(package_id)
+    }
+
+    // don't check if the package already exists. This allows the users to force
+    // re-install a package if they want to
     pub fn install_package(&self, package: Package) -> Result<(), CafError> {
         let pkg_path = self.read_only_pkgman.get_package_path(&package.id.name);
         let install_path = pkg_path.join(package.id.version.to_string());
 
-        let metadata_json = serde_json::to_string_pretty(&PackageMetadata {
-            name: package.id.name.clone(),
-            active_version: package.id.version.clone(),
-        })
-        .wrap_err_with_code(
-            CafErrorCode::BrokenDatabaseState,
-            format!(
-                "unable to serialize the package metadata into JSON for package {}",
-                package.id
-            ),
-        )?;
+        let installation_metadata = self
+            .read_only_pkgman
+            .read_installation_metadata(&package.id.name)
+            .map(|it| it.with_new_version(&package.id.version))
+            .or_else(|it| {
+                if *it.code() == CafErrorCode::PackageNotFound {
+                    Ok(InstallationMetadata::new(&package.id))
+                } else {
+                    Err(it)
+                }
+            })?;
+
+        let metadata_json = serde_json::to_string_pretty(&installation_metadata)
+            .wrap_err_with_code(
+                CafErrorCode::BrokenDatabaseState,
+                format!(
+                    "unable to serialize the package metadata into JSON for package {}",
+                    package.id
+                ),
+            )?;
 
         fs::create_dir_all(&install_path).wrap_err(format!(
             "unable to create the package directory for package {}",
@@ -367,9 +440,9 @@ mod tests {
         assert_eq!(fs::read(content_path).unwrap(), package.content.0);
 
         let metadata_bytes = fs::read(metadata_path).unwrap();
-        let metadata: PackageMetadata = serde_json::from_slice(&metadata_bytes).unwrap();
+        let metadata: InstallationMetadata = serde_json::from_slice(&metadata_bytes).unwrap();
 
-        let expected_metadata = PackageMetadata {
+        let expected_metadata = InstallationMetadata {
             name: package.id.name.clone(),
             active_version: package.id.version.clone(),
         };

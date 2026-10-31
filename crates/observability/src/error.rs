@@ -20,6 +20,7 @@ pub enum CafErrorCode {
     PackageVersionHasNoProviders,
     FileNotFound,
     PackageNotInstalled,
+    PackageAlreadyInstalled,
     FileAlreadyExists,
     AnotherInstanceRunning,
     OsPermissionDenied,
@@ -39,7 +40,9 @@ impl CafErrorCode {
                 Code::NotFound
             }
             Self::PackageNotInstalled => Code::FailedPrecondition,
-            Self::FileAlreadyExists | Self::AnotherInstanceRunning => Code::AlreadyExists,
+            Self::FileAlreadyExists
+            | Self::AnotherInstanceRunning
+            | Self::PackageAlreadyInstalled => Code::AlreadyExists,
             Self::OsPermissionDenied | Self::CliPermissionDenied => Code::PermissionDenied,
             Self::IoOperationCanceled => Code::Cancelled,
             Self::OutOfDiskStorage => Code::ResourceExhausted,
@@ -94,6 +97,10 @@ impl CafError {
         }
     }
 
+    pub fn code(&self) -> &CafErrorCode {
+        &self.code
+    }
+
     pub fn to_status_error(self) -> Status {
         let metadata = {
             let mut metadata = MetadataMap::new();
@@ -145,6 +152,7 @@ impl fmt::Display for CafError {
             CafErrorCode::CliPermissionDenied => {
                 "your user does not have the permission to execute this command".to_string()
             }
+            CafErrorCode::PackageAlreadyInstalled => "package already installed".to_string(),
             CafErrorCode::PackageNotInstalled => "the package is not installed".to_string(),
             CafErrorCode::PackageNotFound => "the package is not found".to_string(),
             CafErrorCode::PackageVersionHasNoProviders => {
