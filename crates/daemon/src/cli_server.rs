@@ -286,3 +286,42 @@ impl CommandProcessor {
         Ok(Response::new(InstallPackageResponse {}))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::network::{Network, NetworkConfig};
+    use crate::pkgman::{Package, TarballCompressedPackageContent};
+    use semver::Version;
+    use tempfile::tempdir;
+    use tonic::Code;
+
+    #[tokio::test]
+    async fn install_package_returns_error_when_already_installed_locally() {
+        let temp_dir = tempdir().unwrap();
+        let pkgman = PackageManager::new(temp_dir.path().to_path_buf()).unwrap();
+        let (_ntwrk, ntwrk_client) = Network::init(NetworkConfig::new()).unwrap();
+        let (_cmd_sender, cmd_recv) = mpsc::channel(1);
+
+        let package = Package {
+            id: PackageId {
+                name: "testpkg".into(),
+                version: Version::parse("1.0.0").unwrap(),
+            },
+            content: TarballCompressedPackageContent(vec![1, 2, 3]),
+        };
+        pkgman.install_package(package).unwrap();
+
+        let mut processor = CommandProcessor::new(pkgman, ntwrk_client, cmd_recv);
+
+        let req = InstallPackageRequest {
+            user_package_id: "testpkg@1.0.0".to_string(),
+        };
+
+        let result = processor.process_install_package(&req).await;
+        assert!(result.is_err());
+        let status = result.unwrap_err();
+        assert_eq!(status.code(), Code::AlreadyExists);
+        assert!(status.message().contains("package is already installed"));
+    }
+}

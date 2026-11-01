@@ -574,3 +574,14 @@ impl EventLoop {
         };
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_local_peer_id() {
+        let (_ntwrk, client) = Network::init(NetworkConfig::new()).unwrap();
+        assert!(!client.local_peer_id().to_bytes().is_empty());
+    }
+}

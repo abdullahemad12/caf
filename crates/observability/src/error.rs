@@ -273,3 +273,41 @@ impl<T> LoggedUnwrap<T> for Result<T, CafError> {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_package_already_installed_error_mapping() {
+        let err = CafError::new(
+            CafErrorCode::PackageAlreadyInstalled,
+            "package is already installed",
+        );
+        assert_eq!(*err.code(), CafErrorCode::PackageAlreadyInstalled);
+        assert_eq!(
+            err.to_string(),
+            "package is already installed: package already installed"
+        );
+
+        let status = err.to_status_error();
+        assert_eq!(status.code(), Code::AlreadyExists);
+        assert_eq!(
+            status.message(),
+            "package is already installed: package already installed"
+        );
+        let metadata_val = status
+            .metadata()
+            .get(CAF_ERROR_CODE_HEADER)
+            .expect("header must be present");
+        assert_eq!(metadata_val.to_str().unwrap(), "PackageAlreadyInstalled");
+    }
+
+    #[test]
+    fn test_package_already_installed_display() {
+        assert_eq!(
+            CafErrorCode::PackageAlreadyInstalled.to_string(),
+            "PackageAlreadyInstalled"
+        );
+    }
+}

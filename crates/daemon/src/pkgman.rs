@@ -28,7 +28,9 @@ impl InstallationMetadata {
             active_version: new_version.clone(),
             verified_downloaded_versions: {
                 let mut versions = self.verified_downloaded_versions.clone();
-                versions.push(new_version.clone());
+                if !versions.contains(new_version) {
+                    versions.push(new_version.clone());
+                }
                 versions
             },
         }
@@ -445,6 +447,7 @@ mod tests {
         let expected_metadata = InstallationMetadata {
             name: package.id.name.clone(),
             active_version: package.id.version.clone(),
+            verified_downloaded_versions: vec![package.id.version.clone()],
         };
         assert_eq!(metadata, expected_metadata);
     }
@@ -564,5 +567,172 @@ mod tests {
         assert_eq!(ids.len(), 1);
         assert_eq!(ids[0].name, "pkg_a");
         assert_eq!(ids[0].version, Version::parse("1.0.0").unwrap());
+    }
+
+    #[test]
+    fn pkg_exists_locally_returns_false_when_package_never_installed() {
+        let temp_dir = tempdir().unwrap();
+        let manager = PackageManager::new(temp_dir.path().to_path_buf()).unwrap();
+        let pkg_id = PackageId::new("nonexistent", "1.0.0").unwrap();
+
+        assert!(!manager.pkg_exists_locally(&pkg_id).unwrap());
+    }
+
+    #[test]
+    fn pkg_exists_locally_returns_true_when_package_installed() {
+        let temp_dir = tempdir().unwrap();
+        let manager = PackageManager::new(temp_dir.path().to_path_buf()).unwrap();
+        let package = fixture_package();
+        manager.install_package(package.clone()).unwrap();
+
+        assert!(manager.pkg_exists_locally(&package.id).unwrap());
+    }
+
+    #[test]
+    fn pkg_exists_locally_returns_false_for_uninstalled_version_of_existing_package() {
+        let temp_dir = tempdir().unwrap();
+        let manager = PackageManager::new(temp_dir.path().to_path_buf()).unwrap();
+        let package = fixture_package();
+        manager.install_package(package.clone()).unwrap();
+
+        let other_version = PackageId::new(&package.id.name, "2.0.0").unwrap();
+        assert!(!manager.pkg_exists_locally(&other_version).unwrap());
+    }
+
+    #[test]
+    fn pkg_exists_locally_returns_false_if_content_file_is_missing() {
+        let temp_dir = tempdir().unwrap();
+        let manager = PackageManager::new(temp_dir.path().to_path_buf()).unwrap();
+        let package = fixture_package();
+        manager.install_package(package.clone()).unwrap();
+
+        let content_path = temp_dir
+            .path()
+            .join("pkgs")
+            .join(&package.id.name)
+            .join(package.id.version.to_string())
+            .join(ReadOnlyPackageManager::CONTENT_FILE_NAME);
+
+        fs::remove_file(content_path).unwrap();
+
+        assert!(!manager.pkg_exists_locally(&package.id).unwrap());
+    }
+
+    #[test]
+    fn pkg_exists_locally_returns_error_on_corrupted_metadata() {
+        let temp_dir = tempdir().unwrap();
+        let manager = PackageManager::new(temp_dir.path().to_path_buf()).unwrap();
+        let pkg_dir = temp_dir.path().join("pkgs").join("corrupt_pkg");
+        fs::create_dir_all(&pkg_dir).unwrap();
+        fs::write(
+            pkg_dir.join(ReadOnlyPackageManager::METADATA_FILE_NAME),
+            "invalid json",
+        )
+        .unwrap();
+
+        let pkg_id = PackageId::new("corrupt_pkg", "1.0.0").unwrap();
+        let err = manager.pkg_exists_locally(&pkg_id).unwrap_err();
+        assert_eq!(*err.code(), CafErrorCode::BrokenDatabaseState);
+    }
+
+    #[test]
+    fn install_package_multiple_versions_updates_metadata_and_availability() {
+        let temp_dir = tempdir().unwrap();
+        let manager = PackageManager::new(temp_dir.path().to_path_buf()).unwrap();
+
+        let pkg_v1 = Package {
+            id: PackageId::new("widget", "1.0.0").unwrap(),
+            content: TarballCompressedPackageContent(vec![1, 2, 3]),
+        };
+        let pkg_v2 = Package {
+            id: PackageId::new("widget", "2.0.0").unwrap(),
+            content: TarballCompressedPackageContent(vec![4, 5, 6]),
+        };
+
+        manager.install_package(pkg_v1.clone()).unwrap();
+        assert!(manager.pkg_exists_locally(&pkg_v1.id).unwrap());
+        assert!(!manager.pkg_exists_locally(&pkg_v2.id).unwrap());
+
+        // Install second version
+        manager.install_package(pkg_v2.clone()).unwrap();
+        assert!(manager.pkg_exists_locally(&pkg_v1.id).unwrap());
+        assert!(manager.pkg_exists_locally(&pkg_v2.id).unwrap());
+
+        // Check active version is updated to latest installed
+        let active = manager
+            .retrieve_active_package_version(&"widget".to_string())
+            .unwrap();
+        assert_eq!(active, pkg_v2.id);
+
+        // Check metadata contents
+        let metadata_path = temp_dir
+            .path()
+            .join("pkgs")
+            .join("widget")
+            .join(ReadOnlyPackageManager::METADATA_FILE_NAME);
+        let metadata_bytes = fs::read(metadata_path).unwrap();
+        let metadata: InstallationMetadata = serde_json::from_slice(&metadata_bytes).unwrap();
+
+        assert_eq!(metadata.active_version, pkg_v2.id.version);
+        assert_eq!(
+            metadata.verified_downloaded_versions,
+            vec![pkg_v1.id.version, pkg_v2.id.version]
+        );
+    }
+
+    #[test]
+    fn install_package_reinstall_same_version_deduplicates_verified_versions() {
+        let temp_dir = tempdir().unwrap();
+        let manager = PackageManager::new(temp_dir.path().to_path_buf()).unwrap();
+        let package = fixture_package();
+
+        manager.install_package(package.clone()).unwrap();
+        manager.install_package(package.clone()).unwrap();
+
+        let metadata_path = temp_dir
+            .path()
+            .join("pkgs")
+            .join(&package.id.name)
+            .join(ReadOnlyPackageManager::METADATA_FILE_NAME);
+        let metadata_bytes = fs::read(metadata_path).unwrap();
+        let metadata: InstallationMetadata = serde_json::from_slice(&metadata_bytes).unwrap();
+
+        assert_eq!(
+            metadata.verified_downloaded_versions,
+            vec![package.id.version]
+        );
+    }
+
+    #[test]
+    fn read_only_pkgman_pkg_exists_locally() {
+        let temp_dir = tempdir().unwrap();
+        let manager = PackageManager::new(temp_dir.path().to_path_buf()).unwrap();
+        let package = fixture_package();
+        manager.install_package(package.clone()).unwrap();
+
+        let ro_manager = ReadOnlyPackageManager::new(temp_dir.path().to_path_buf()).unwrap();
+        assert!(ro_manager.pkg_exists_locally(&package.id).unwrap());
+
+        let nonexistent = PackageId::new("other", "1.0.0").unwrap();
+        assert!(!ro_manager.pkg_exists_locally(&nonexistent).unwrap());
+    }
+
+    #[test]
+    fn installation_metadata_serialization_camel_case() {
+        let metadata = InstallationMetadata {
+            name: "test-pkg".to_string(),
+            active_version: Version::parse("1.2.3").unwrap(),
+            verified_downloaded_versions: vec![
+                Version::parse("1.0.0").unwrap(),
+                Version::parse("1.2.3").unwrap(),
+            ],
+        };
+
+        let json_str = serde_json::to_string(&metadata).unwrap();
+        assert!(json_str.contains("\"activeVersion\":\"1.2.3\""));
+        assert!(json_str.contains("\"verifiedDownloadedVersions\":[\"1.0.0\",\"1.2.3\"]"));
+
+        let deserialized: InstallationMetadata = serde_json::from_str(&json_str).unwrap();
+        assert_eq!(deserialized, metadata);
     }
 }
