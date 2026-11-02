@@ -382,20 +382,12 @@ impl PackageManager {
         Ok(())
     }
 
-    pub fn retrieve_package(&self, request: &PackageId) -> Result<Package, CafError> {
-        self.read_only_pkgman.retrieve_package(request)
-    }
-
     pub fn retrieve_active_package_version(
         &self,
         package_name: &String,
     ) -> Result<PackageId, CafError> {
         self.read_only_pkgman
             .retrieve_active_package_version(package_name)
-    }
-
-    pub fn all_package_ids_iter(&self) -> Result<impl Iterator<Item = PackageId>, CafError> {
-        self.read_only_pkgman.all_package_ids_iter()
     }
 }
 
@@ -429,7 +421,7 @@ mod tests {
             .path()
             .join("pkgs")
             .join(&package.id.name)
-            .join(&package.id.version.to_string());
+            .join(package.id.version.to_string());
 
         let content_path = install_path.join(ReadOnlyPackageManager::CONTENT_FILE_NAME);
 
@@ -462,7 +454,7 @@ mod tests {
         manager.install_package(package.clone()).unwrap();
 
         // when:
-        let retrieved = manager.retrieve_package(&package.id).unwrap();
+        let retrieved = manager.read_only_pkgman.retrieve_package(&package.id).unwrap();
 
         // then:
         assert_eq!(retrieved, package);
@@ -489,7 +481,7 @@ mod tests {
     fn all_package_ids_iter_empty() {
         // given:
         let temp_dir = tempdir().unwrap();
-        let manager = PackageManager::new(temp_dir.path().to_path_buf()).unwrap();
+        let manager = ReadOnlyPackageManager::new(temp_dir.path().to_path_buf()).unwrap();
 
         // when:
         let ids: Vec<PackageId> = manager.all_package_ids_iter().unwrap().collect();
@@ -529,7 +521,11 @@ mod tests {
         }
 
         // when:
-        let mut ids: Vec<PackageId> = manager.all_package_ids_iter().unwrap().collect();
+        let mut ids: Vec<PackageId> = manager
+            .read_only_pkgman
+            .all_package_ids_iter()
+            .unwrap()
+            .collect();
 
         // then:
         ids.sort_by(|a, b| a.name.cmp(&b.name).then(a.version.cmp(&b.version)));
@@ -544,7 +540,7 @@ mod tests {
     fn all_package_ids_iter_ignores_non_directory_files() {
         // given:
         let temp_dir = tempdir().unwrap();
-        let manager = PackageManager::new(temp_dir.path().to_path_buf()).unwrap();
+        let manager = ReadOnlyPackageManager::new(temp_dir.path().to_path_buf()).unwrap();
 
         let pkgs_dir = temp_dir.path().join("pkgs");
         fs::create_dir_all(&pkgs_dir).unwrap();

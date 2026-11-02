@@ -10,6 +10,7 @@ use std::{
 
 use libp2p::{
     Multiaddr, PeerId, StreamProtocol, identify, identity, kad,
+    kad::RecordKey,
     multiaddr::Protocol,
     noise,
     request_response::{self, OutboundRequestId, ProtocolSupport, ResponseChannel},
@@ -74,6 +75,10 @@ enum Command {
         package_id: PackageId,
         sender: oneshot::Sender<()>,
     },
+    StopProviding {
+        package_id: PackageId,
+        sender: oneshot::Sender<()>,
+    },
     Bootstrap {
         sender: oneshot::Sender<Result<(), CafError>>,
     },
@@ -113,6 +118,7 @@ pub struct NetworkClient {
     sender: mpsc::Sender<Command>,
 }
 
+// TODO: maybe prevent the functions from panicking
 impl NetworkClient {
     fn new(peer_id: PeerId, sender: mpsc::Sender<Command>) -> Self {
         NetworkClient { peer_id, sender }
@@ -169,6 +175,17 @@ impl NetworkClient {
         receiver.await.expect("sender not to be dropped");
     }
 
+    pub async fn stop_providing(&mut self, package_id: PackageId) {
+        let (sender, receiver) = oneshot::channel();
+
+        self.sender
+            .send(Command::StopProviding { package_id, sender })
+            .await
+            .expect("command receiver not to be dropped");
+
+        receiver.await.expect("sender not to be dropped");
+    }
+
     pub async fn respond_package(
         &mut self,
         package: pkgman::TarballCompressedPackageContent,
@@ -210,6 +227,7 @@ impl Network {
     const PROTOCOL_VERSION: &'static str = protocol_version!();
     const PROTOCOL_NAME: &'static str = concat!("/caf/", protocol_version!());
 
+    // TODO: NAT Hole Punching needs to be supported
     pub fn init(network_conf: NetworkConfig) -> Result<(Self, NetworkClient), Box<CafError>> {
         let id_keys = identity::Keypair::generate_ed25519();
 
@@ -549,7 +567,7 @@ impl EventLoop {
                     .behaviour_mut()
                     .request_response
                     .send_response(channel, package)
-                    .expect("connection to pper to be still open");
+                    .expect("connection to peer to be still open");
             }
             Command::StartProviding { package_id, sender } => {
                 let query_id = self
@@ -560,6 +578,12 @@ impl EventLoop {
                     .expect("no store error");
 
                 self.pending_start_providing.insert(query_id, sender);
+            }
+            Command::StopProviding { package_id, sender } => {
+                let key: RecordKey = package_id.into();
+                self.swarm.behaviour_mut().kademlia.stop_providing(&key);
+
+                sender.send(()).expect("channel not to be dropped");
             }
             Command::Bootstrap { sender } => {
                 let query_id = self

@@ -226,22 +226,24 @@ impl CommandProcessor {
     ) -> Result<Response<InstallPackageResponse>, Status> {
         let package_id: PackageId = req.user_package_id.clone().try_into().map_err_to_status()?;
 
-        // TODO: Allow the user to force reinstall the package
-        // The idea is basically to add a force-reinstall flag to the request
-        // and if initially it is passed with false (unless the user also provides a cli option to
-        // set it to true). If it is set to false, do the check and return the error. When this
-        // happens, display a confirmation message to the user and if they say yes, send the request
-        // again with this flag set to true
         if self
             ._pkgman
             .pkg_exists_locally(&package_id)
             .map_err_to_status()?
         {
-            return Err(CafError::new(
-                CafErrorCode::PackageAlreadyInstalled,
-                "package is already installed",
-            ))
-            .map_err_to_status();
+            // returning an error will produce a warning to the user and ask them to confirm whether
+            // they want to force re-install this package.
+            if !req.force_install {
+                return Err(CafError::new(
+                    CafErrorCode::PackageAlreadyInstalled,
+                    "package is already installed",
+                ))
+                .map_err_to_status();
+            }
+
+            // if the user wants to force re-install, stop providing the package so that we refetch
+            // it from other providers
+            self._ntwrk_client.stop_providing(package_id.clone()).await
         }
 
         let providers = self._ntwrk_client.get_providers(package_id.clone()).await;
@@ -316,6 +318,7 @@ mod tests {
 
         let req = InstallPackageRequest {
             user_package_id: "testpkg@1.0.0".to_string(),
+            force_install: false,
         };
 
         let result = processor.process_install_package(&req).await;

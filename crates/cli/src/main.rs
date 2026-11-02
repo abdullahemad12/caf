@@ -1,9 +1,9 @@
-use std::process::ExitCode;
+use std::{io::Write, process::ExitCode};
 
 use clap::{Parser, Subcommand};
 use directories::ProjectDirs;
 use observability::{
-    error::{CafError, WrapErrorInResult},
+    error::{CafError, CafErrorCode, WrapErrorInResult},
     tracing::setup_tracing,
 };
 use protocol::protocol::{
@@ -94,17 +94,74 @@ async fn get_active_package_version(
 }
 
 async fn install_package(
-    mut cli_client: CliServiceClient<Channel>,
+    cli_client: CliServiceClient<Channel>,
     user_package_id: String,
 ) -> Result<(), CafError> {
-    cli_client
-        .install_package(InstallPackageRequest {
+    let resp = send_and_track_installation_request(
+        cli_client.clone(),
+        InstallPackageRequest {
             user_package_id: user_package_id.clone(),
-        })
-        .await
-        .wrap_err("installing the package failed")?;
+            force_install: false,
+        },
+    )
+    .await;
+
+    let installation_err = match resp {
+        Ok(_) => {
+            caf_info!("successfully installed {}", user_package_id.clone());
+            return Ok(());
+        }
+        Err(err) => err,
+    };
+
+    if *installation_err.code() != CafErrorCode::PackageAlreadyInstalled {
+        return Err(installation_err);
+    }
+
+    tracing::warn!("{} is already installed. re-installing", user_package_id);
+    if !prompt_user_confirmation("proceed with installation?")? {
+        return Err(installation_err);
+    }
+
+    send_and_track_installation_request(
+        cli_client,
+        InstallPackageRequest {
+            user_package_id: user_package_id.clone(),
+            force_install: true,
+        },
+    )
+    .await?;
 
     caf_info!("successfully installed {}", user_package_id.clone());
 
     Ok(())
+}
+
+// TODO: this should be used later to also track the progress of the installation and report
+// it to the user instead of blocking until everything is done
+async fn send_and_track_installation_request(
+    mut cli_client: CliServiceClient<Channel>,
+    req: InstallPackageRequest,
+) -> Result<(), CafError> {
+    cli_client
+        .install_package(req)
+        .await
+        .map(|_| ())
+        .wrap_err("installing the package failed")
+}
+
+fn prompt_user_confirmation(confirmation_msg: impl Into<String>) -> Result<bool, CafError> {
+    write!(std::io::stdout(), ":: {} [Y/n]: ", confirmation_msg.into())
+        .wrap_err("unable to write the confiramtion message to stdout")?;
+
+    std::io::stdout()
+        .flush()
+        .wrap_err("unable to flush the confirmation message to stdout")?;
+
+    let mut user_input = String::new();
+    std::io::stdin()
+        .read_line(&mut user_input)
+        .wrap_err("unable to read the confirmation from stdin")?;
+
+    Ok(user_input.trim().to_lowercase() == "y")
 }
