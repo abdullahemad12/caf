@@ -4,6 +4,7 @@ members = [
     "crates/daemon",
     "crates/protocol",
     "crates/observability",
+    "crates/metadata_server",
 ]
 
 resolver = "2"

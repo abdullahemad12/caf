@@ -16,3 +16,8 @@ Currently downloading the compressed file works however, If the node finds itsel
 ## Uninstallation
 
 - Not implemented at all
+
+
+## Metadata Server
+
+An Http server Axum using Postgress
